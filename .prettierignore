@@ -1,0 +1,7 @@
+.yarn/
+coverage/
+dist/
+node_modules/
+infrastructure/docker/.env
+infrastructure/docker/secrets/
+yarn.lock

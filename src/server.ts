@@ -1,0 +1,127 @@
+import { createServer, type Server } from 'node:http';
+
+import type { Logger } from 'pino';
+
+import { createApp } from './app.js';
+import { passwordHasher } from './auth/crypto.js';
+import { createAccessTokenProvider } from './auth/jwt.js';
+import { createMongoAuthRepository } from './auth/mongo-repository.js';
+import { createRedisRateLimiter } from './auth/redis-rate-limiter.js';
+import { createUnconfiguredRecoveryNotifier } from './auth/recovery-notifier.js';
+import {
+  createAwsSesEmailClient,
+  createSesRecoveryNotifier,
+} from './auth/ses-recovery-notifier.js';
+import { createSmtpRecoveryNotifier } from './auth/smtp-recovery-notifier.js';
+import { createAuthService } from './auth/service.js';
+import { createMongoConversationRepository } from './conversations/repository.js';
+import { createConversationService } from './conversations/service.js';
+import { loadConfig } from './config/env.js';
+import { createReadinessProbe } from './health/readiness.js';
+import { createMongoConnection } from './infrastructure/mongo.js';
+import { createRedisConnection } from './infrastructure/redis.js';
+import { createLogger } from './logging/logger.js';
+import { createMessageService } from './messages/service.js';
+import { createShutdownHandler } from './runtime/shutdown.js';
+import { createRealtimeServer } from './realtime/socket-server.js';
+import { createMongoUserRepository } from './users/repository.js';
+import { createUserService } from './users/service.js';
+
+function listen(server: Server, port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '0.0.0.0', () => {
+      server.removeListener('error', reject);
+      resolve();
+    });
+  });
+}
+
+async function main(): Promise<void> {
+  const config = loadConfig();
+  const logger: Logger = createLogger(config);
+  const mongo = createMongoConnection(config, logger);
+  const redis = createRedisConnection(config, logger);
+
+  try {
+    await Promise.all([mongo.connect(), redis.connect()]);
+  } catch (error) {
+    logger.fatal({ err: error }, 'Failed to connect required dependencies');
+    await Promise.allSettled([mongo.disconnect(), redis.disconnect()]);
+    throw error;
+  }
+
+  const readiness = createReadinessProbe({ mongo, redis });
+  const recoveryNotifier =
+    config.email.provider === 'ses'
+      ? createSesRecoveryNotifier({
+          client: createAwsSesEmailClient(config.email.region),
+          fromEmail: config.email.fromEmail,
+          templateName: config.email.templateName,
+        })
+      : config.email.provider === 'smtp'
+        ? createSmtpRecoveryNotifier(config.email)
+        : createUnconfiguredRecoveryNotifier(logger);
+  const auth = createAuthService({
+    accessTokens: createAccessTokenProvider({
+      audience: config.accessTokenAudience,
+      issuer: config.accessTokenIssuer,
+      privateKeyPem: config.accessTokenPrivateKey,
+      publicKeyPem: config.accessTokenPublicKey,
+      ttlSeconds: config.accessTokenTtlSeconds,
+    }),
+    passwordHasher,
+    rateLimiter: createRedisRateLimiter(redis),
+    recoveryNotifier,
+    repository: createMongoAuthRepository(),
+    refreshTokenTtlDays: config.refreshTokenTtlDays,
+    resetTtlMinutes: config.passwordResetTtlMinutes,
+    resetUrl: config.passwordResetUrl,
+  });
+  const rateLimiter = createRedisRateLimiter(redis);
+  const userRepository = createMongoUserRepository();
+  const users = createUserService(userRepository, rateLimiter);
+  const conversations = createConversationService(
+    createMongoConversationRepository(),
+    userRepository,
+  );
+  const messages = createMessageService(() => new Date(), rateLimiter);
+  const app = createApp({ auth, config, conversations, logger, messages, readiness, users });
+  const server = createServer(app);
+  const realtime = await createRealtimeServer({ auth, config, logger, messages, server });
+  const shutdown = createShutdownHandler({
+    connections: [realtime, mongo, redis],
+    logger,
+    server,
+    timeoutMs: config.shutdownTimeoutMs,
+  });
+
+  const onSignal = (signal: NodeJS.Signals): void => {
+    void shutdown(signal).catch((error: unknown) => {
+      logger.fatal({ err: error }, 'Graceful shutdown failed');
+      process.exitCode = 1;
+    });
+  };
+
+  const onFatalError = (error: unknown, origin: string): void => {
+    logger.fatal({ err: error, origin }, 'Fatal process error');
+    process.exitCode = 1;
+    void shutdown(origin).catch((shutdownError: unknown) => {
+      logger.fatal({ err: shutdownError }, 'Shutdown after fatal error failed');
+    });
+  };
+
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
+  process.once('uncaughtException', (error) => onFatalError(error, 'uncaughtException'));
+  process.once('unhandledRejection', (reason) => onFatalError(reason, 'unhandledRejection'));
+
+  await listen(server, config.port);
+  logger.info({ port: config.port }, 'Chat API listening');
+}
+
+void main().catch((error: unknown) => {
+  const fallbackLogger = createLogger({ logLevel: 'error', nodeEnv: 'production' });
+  fallbackLogger.fatal({ err: error }, 'API startup failed');
+  process.exitCode = 1;
+});

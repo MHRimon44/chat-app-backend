@@ -1,0 +1,155 @@
+name: ${COMPOSE_PROJECT_NAME:-production-chat-local}
+
+services:
+  mongo-keyfile-init:
+    image: alpine:3.23.3
+    restart: 'no'
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        if [ ! -s /mongo-keyfile/keyfile ]; then
+          umask 077
+          head -c 756 /dev/urandom | base64 > /mongo-keyfile/keyfile
+        fi
+        chown 999:999 /mongo-keyfile/keyfile
+        chmod 400 /mongo-keyfile/keyfile
+    volumes:
+      - mongo-keyfile:/mongo-keyfile
+    networks:
+      - chat-internal
+    security_opt:
+      - no-new-privileges:true
+
+  mongo:
+    image: mongo:8.0.29-noble
+    restart: unless-stopped
+    depends_on:
+      mongo-keyfile-init:
+        condition: service_completed_successfully
+    command:
+      - mongod
+      - --replSet
+      - rs0
+      - --bind_ip_all
+      - --keyFile
+      - /run/mongo-keyfile/keyfile
+      - --setParameter
+      - diagnosticDataCollectionEnabled=false
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?Set MONGO_ROOT_USERNAME in infrastructure/docker/.env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD in infrastructure/docker/.env}
+    ports:
+      - '127.0.0.1:27017:27017'
+    volumes:
+      - mongo-data:/data/db
+      - mongo-config:/data/configdb
+      - mongo-keyfile:/run/mongo-keyfile:ro
+      - ./mongo/verify.js:/scripts/verify.js:ro
+      - ./mongo/verify-transaction.js:/scripts/verify-transaction.js:ro
+    networks:
+      - chat-internal
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet --host 127.0.0.1 --port 27017
+          --username "$${MONGO_INITDB_ROOT_USERNAME}"
+          --password "$${MONGO_INITDB_ROOT_PASSWORD}"
+          --authenticationDatabase admin
+          --eval 'quit(db.adminCommand({ ping: 1 }).ok ? 0 : 1)'
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+
+  mongo-init:
+    image: mongo:8.0.29-noble
+    restart: 'no'
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGO_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?Set MONGO_ROOT_USERNAME in infrastructure/docker/.env}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD in infrastructure/docker/.env}
+      MONGO_APP_DATABASE: ${MONGO_APP_DATABASE:-chat_app}
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME:-chat_app}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?Set MONGO_APP_PASSWORD in infrastructure/docker/.env}
+    entrypoint:
+      - /bin/bash
+      - /scripts/init-mongo.sh
+    volumes:
+      - ./mongo/init-mongo.sh:/scripts/init-mongo.sh:ro
+      - ./mongo/init-replica.js:/scripts/init-replica.js:ro
+    networks:
+      - chat-internal
+    security_opt:
+      - no-new-privileges:true
+
+  redis:
+    image: redis:7.2.16-alpine3.21
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in infrastructure/docker/.env}
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        exec redis-server
+        --appendonly yes
+        --appendfsync everysec
+        --requirepass "$${REDIS_PASSWORD}"
+        --maxmemory-policy noeviction
+    ports:
+      - '127.0.0.1:6379:6379'
+    volumes:
+      - redis-data:/data
+    networks:
+      - chat-internal
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-cli --no-auth-warning ping | grep -q PONG
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 15s
+
+  mailpit:
+    image: axllent/mailpit:v1.30.6
+    restart: unless-stopped
+    environment:
+      MP_DATABASE: /data/mailpit.db
+      MP_MAX_MESSAGES: '1000'
+    ports:
+      - '127.0.0.1:1025:1025'
+      - '127.0.0.1:8025:8025'
+    volumes:
+      - mailpit-data:/data
+    networks:
+      - chat-internal
+    healthcheck:
+      test: ['CMD', '/mailpit', 'readyz']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  chat-internal:
+    driver: bridge
+
+volumes:
+  mailpit-data:
+  mongo-config:
+  mongo-data:
+  mongo-keyfile:
+  redis-data:

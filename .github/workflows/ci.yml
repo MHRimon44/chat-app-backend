@@ -1,0 +1,27 @@
+name: backend-ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - run: corepack enable
+      - run: yarn install --immutable
+      - run: yarn format:check
+      - run: yarn lint
+      - run: yarn typecheck
+      - run: yarn test:ci
+      - run: yarn build
+      - run: yarn security:secrets
