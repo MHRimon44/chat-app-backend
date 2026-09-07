@@ -53,7 +53,7 @@ function tokenPair(envelope: Record<string, unknown>, label: string): TokenPair 
 async function register(
   fetcher: FetchLike,
   apiUrl: string,
-  input: { displayName: string; email: string; password: string },
+  input: { username: string; displayName: string; email: string; password: string },
 ): Promise<TokenPair> {
   return tokenPair(
     await jsonRequest(fetcher, `${apiUrl}/v1/auth/register`, {
@@ -92,11 +92,13 @@ async function main(): Promise<void> {
 
   await jsonRequest(fetch, `${apiUrl}/v1/health/ready`);
   const first = await register(fetch, apiUrl, {
+    username: `alice_${runId}`.replaceAll('-', '_').slice(0, 30),
     displayName: 'Local E2E Alice',
     email: firstEmail,
     password,
   });
   const second = await register(fetch, apiUrl, {
+    username: `bob_${runId}`.replaceAll('-', '_').slice(0, 30),
     displayName: 'Local E2E Bob',
     email: secondEmail,
     password,

@@ -2,6 +2,7 @@ export type UserStatus = 'active' | 'disabled';
 
 export type AuthUser = Readonly<{
   id: string;
+  username?: string;
   displayName: string;
   email: string;
   emailNormalized: string;
@@ -12,6 +13,7 @@ export type AuthUser = Readonly<{
 
 export type PublicAuthUser = Readonly<{
   id: string;
+  username?: string;
   displayName: string;
   email: string;
 }>;

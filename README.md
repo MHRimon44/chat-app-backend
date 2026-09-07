@@ -1,6 +1,6 @@
 # Chat App Backend
 
-Standalone Node.js backend for the Chat App. It provides authentication, profiles, username search, direct conversations, real-time messaging, presence, typing indicators, receipts, Swagger documentation, and local password-recovery email.
+Standalone Node.js backend for the Chat App. Registration requires a unique searchable username, and authenticated users can update their username, display name, bio, and presence privacy. It also provides direct conversations, real-time messaging, presence, typing indicators, receipts, Swagger documentation, and local password-recovery email.
 
 ## Stack
 
@@ -41,6 +41,8 @@ Local URLs:
 - API readiness: http://localhost:4000/v1/health/ready
 - Swagger: http://localhost:4000/docs/
 - Mailpit: http://localhost:8025
+
+New usernames must contain 3–30 letters, numbers, or underscores. Existing accounts without a username can add one through the mobile Profile & Settings screen or `PATCH /v1/users/me` in Swagger.
 
 ## Verify
 

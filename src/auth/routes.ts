@@ -7,6 +7,10 @@ import type { DeviceMetadata } from './types.js';
 
 const emailSchema = z.string().trim().email().max(254);
 const passwordSchema = z.string().min(12).max(128);
+const usernameSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-zA-Z0-9_]{3,30}$/);
 const deviceSchema = z.object({
   deviceId: z.string().trim().min(1).max(200).optional(),
   deviceName: z.string().trim().min(1).max(100).optional(),
@@ -14,6 +18,7 @@ const deviceSchema = z.object({
   appVersion: z.string().trim().min(1).max(50).optional(),
 });
 const registerSchema = z.object({
+  username: usernameSchema,
   displayName: z.string().trim().min(1).max(80),
   email: emailSchema,
   password: passwordSchema,
@@ -36,6 +41,7 @@ export function createAuthRouter(auth: AuthService): Router {
   router.post('/register', async (request, response) => {
     const input = registerSchema.parse(request.body);
     const pair = await auth.register({
+      username: input.username,
       displayName: input.displayName,
       email: input.email,
       password: input.password,

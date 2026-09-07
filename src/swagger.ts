@@ -112,7 +112,12 @@ const tokenResponse = object(
         accessToken: string,
         accessTokenExpiresAt: date,
         refreshToken: string,
-        user: object({ id, displayName: string, email }, ['id', 'displayName', 'email']),
+        user: object({ id, username: string, displayName: string, email }, [
+          'id',
+          'username',
+          'displayName',
+          'email',
+        ]),
       },
       ['accessToken', 'accessTokenExpiresAt', 'refreshToken', 'user'],
     ),
@@ -193,10 +198,17 @@ export const openApiDocument = {
         status: 201,
         response: tokenResponse,
         body: object(
-          { displayName: { type: 'string', minLength: 1, maxLength: 80 }, email, password, device },
-          ['displayName', 'email', 'password'],
+          {
+            username: { type: 'string', pattern: '^[a-zA-Z0-9_]{3,30}$' },
+            displayName: { type: 'string', minLength: 1, maxLength: 80 },
+            email,
+            password,
+            device,
+          },
+          ['username', 'displayName', 'email', 'password'],
         ),
         example: {
+          username: 'swagger_test',
           displayName: 'Swagger Test',
           email: 'swagger-test-01@example.com',
           password: 'LocalTestOnly!2026',

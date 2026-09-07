@@ -17,6 +17,7 @@ const GENERIC_RECOVERY_MESSAGE =
 export interface AuthService {
   authenticateAccess(token: string): Promise<{ userId: string; sessionId: string }>;
   register(input: {
+    username: string;
     displayName: string;
     email: string;
     password: string;
@@ -92,6 +93,7 @@ export function createAuthService(dependencies: {
       return claims;
     },
     async register(input: {
+      username: string;
       displayName: string;
       email: string;
       password: string;
@@ -107,6 +109,7 @@ export function createAuthService(dependencies: {
       let user: AuthUser;
       try {
         user = await dependencies.repository.createUser({
+          usernameNormalized: normalizeUsername(input.username),
           displayName: input.displayName.trim(),
           email: input.email.trim(),
           emailNormalized,
@@ -117,7 +120,7 @@ export function createAuthService(dependencies: {
         if (isDuplicateError(error)) {
           throw new AppError({
             code: 'ACCOUNT_EXISTS',
-            message: 'An account with this email already exists.',
+            message: 'That email or username is already in use.',
             statusCode: 409,
           });
         }
@@ -272,8 +275,17 @@ function normalizeEmail(email: string): string {
   return email.trim().normalize('NFKC').toLowerCase();
 }
 
+function normalizeUsername(username: string): string {
+  return username.trim().normalize('NFKC').toLowerCase();
+}
+
 function publicUser(user: AuthUser): PublicAuthUser {
-  return { id: user.id, displayName: user.displayName, email: user.email };
+  return {
+    id: user.id,
+    ...(user.username ? { username: user.username } : {}),
+    displayName: user.displayName,
+    email: user.email,
+  };
 }
 
 function addDays(date: Date, days: number): Date {

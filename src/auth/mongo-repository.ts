@@ -12,6 +12,7 @@ export function createMongoAuthRepository(): AuthRepository {
         {
           emailNormalized: input.emailNormalized,
           emailDisplay: input.email,
+          usernameNormalized: input.usernameNormalized,
           displayName: input.displayName,
           passwordHash: input.passwordHash,
           passwordChangedAt: input.passwordChangedAt,
@@ -237,6 +238,7 @@ function mapUser(value: unknown, includePassword: boolean): AuthUser {
   const passwordHash = includePassword ? asString(record.passwordHash) : '';
   return {
     id: String(record._id),
+    ...(record.usernameNormalized ? { username: asString(record.usernameNormalized) } : {}),
     email: String(record.emailDisplay),
     emailNormalized: String(record.emailNormalized),
     displayName: String(record.displayName),

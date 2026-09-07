@@ -86,6 +86,7 @@ describe('authentication service', () => {
   it('normalizes registration identity, hashes the password, and creates a session', async () => {
     const context = setup();
     const result = await context.service.register({
+      username: ' Mehedi_Hasan ',
       displayName: ' Mehedi Hasan ',
       email: ' Mehedi@Example.COM ',
       password: 'a secure passphrase',
@@ -93,7 +94,11 @@ describe('authentication service', () => {
     });
 
     expect(context.repository.createUser).toHaveBeenCalledWith(
-      expect.objectContaining({ emailNormalized: 'mehedi@example.com', passwordHash: 'new-hash' }),
+      expect.objectContaining({
+        emailNormalized: 'mehedi@example.com',
+        usernameNormalized: 'mehedi_hasan',
+        passwordHash: 'new-hash',
+      }),
     );
     expect(result).toMatchObject({ accessToken: 'access-token', user: { id: 'user-1' } });
     expect(result.refreshToken).toHaveLength(43);

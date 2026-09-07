@@ -42,6 +42,7 @@ describe('authentication HTTP routes', () => {
     const response = await request(app)
       .post('/v1/auth/register')
       .send({
+        username: 'mehedi',
         displayName: 'Mehedi',
         email: 'mehedi@example.com',
         password: 'a secure passphrase',
@@ -52,6 +53,7 @@ describe('authentication HTTP routes', () => {
     expect(response.body).toMatchObject({ data: { accessToken: 'access-token' } });
     expect(auth.register).toHaveBeenCalledWith(
       expect.objectContaining({
+        username: 'mehedi',
         email: 'mehedi@example.com',
         device: expect.objectContaining({ platform: 'android' }),
       }),
@@ -69,7 +71,35 @@ describe('authentication HTTP routes', () => {
 
     const response = await request(app)
       .post('/v1/auth/register')
-      .send({ displayName: 'Mehedi', email: 'mehedi@example.com', password: 'short' })
+      .send({
+        username: 'mehedi',
+        displayName: 'Mehedi',
+        email: 'mehedi@example.com',
+        password: 'short',
+      })
+      .expect(422);
+
+    expect(response.body).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });
+    expect(auth.register).not.toHaveBeenCalled();
+  });
+
+  it('requires a valid username during registration', async () => {
+    const auth = createAuthStub();
+    const app = createApp({
+      auth,
+      config: createTestConfig(),
+      logger: createSilentLogger(),
+      readiness,
+    });
+
+    const response = await request(app)
+      .post('/v1/auth/register')
+      .send({
+        username: 'not valid!',
+        displayName: 'Mehedi',
+        email: 'mehedi@example.com',
+        password: 'a secure passphrase',
+      })
       .expect(422);
 
     expect(response.body).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });

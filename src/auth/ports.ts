@@ -1,6 +1,7 @@
 import type { AuthUser, DeviceMetadata, PasswordResetRecord, SessionRecord } from './types.js';
 
 export type NewUser = Readonly<{
+  usernameNormalized: string;
   displayName: string;
   email: string;
   emailNormalized: string;
