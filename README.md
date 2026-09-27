@@ -60,4 +60,18 @@ Stop containers without deleting data:
 corepack yarn infra:down
 ```
 
-Never commit `.env` or `infrastructure/docker/.env`.
+Never commit `.env`.
+
+## Switching environments
+
+All editable backend environment values live in the root `.env`. `.env.example` is a safe template; `yarn local:setup` generates local credentials and both sections for a fresh checkout.
+
+- Local: uncomment the values under `# Dev` (including local Docker values), and keep every value under `# Prod` commented.
+- Production: comment every Dev value and uncomment the Prod values. Fill in production database, Redis, signing keys, email settings, and public URLs before starting.
+- Keep exactly one section active and restart the backend after changing it. A line beginning with `#` is disabled.
+
+Run `yarn dev` locally. For the compiled backend, run `yarn build` followed by `yarn start`; start loads the same `.env`. Build only compiles TypeScript and does not embed environment values. Existing shell or deployment environment variables take precedence over `.env`; clear conflicting exported values when switching manually. Deployments can also inject values without a file.
+
+Docker development commands also read the root `.env`. Production uses the external services configured in the Prod section. TypeScript, lint, test, and Docker files remain as tooling definitions; `src/config/env.ts` validates the environment values.
+
+This repository builds the backend, not an Android APK. Configure the API base URL in the mobile project separately, and keep backend secrets on the server.

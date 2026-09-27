@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 readonly script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly docker_directory="$(cd -- "${script_directory}/.." && pwd)"
-readonly env_file="${docker_directory}/.env"
+readonly env_file="${docker_directory}/../../.env"
 readonly compose_file="${docker_directory}/compose.yaml"
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -18,13 +18,13 @@ if ! docker compose version >/dev/null 2>&1; then
 fi
 
 if [[ ! -f "${env_file}" ]]; then
-  echo 'Missing infrastructure/docker/.env.' >&2
-  echo 'Copy infrastructure/docker/.env.example to infrastructure/docker/.env and replace every placeholder.' >&2
+  echo 'Missing .env.' >&2
+  echo 'Copy .env.example to .env and replace every placeholder.' >&2
   exit 1
 fi
 
-if grep -q 'replace_with_' "${env_file}"; then
-  echo 'Replace every replace_with_* value in infrastructure/docker/.env before starting services.' >&2
+if grep -Eq '^[[:space:]]*[^#[:space:]][^=]*=.*replace_with_' "${env_file}"; then
+  echo 'Replace every replace_with_* value in .env before starting services.' >&2
   exit 1
 fi
 
