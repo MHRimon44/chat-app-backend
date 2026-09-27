@@ -1,5 +1,4 @@
-import type { Express } from 'express';
-
+import type { Express, Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import swaggerUi from 'swagger-ui-express';
 
@@ -695,7 +694,7 @@ export function mountSwagger(app: Express, nodeEnv: string): void {
   app.use(
     '/docs',
 
-    (_request, response, next) => {
+    (_request: Request, response: Response, next: NextFunction) => {
       response.setHeader('Cache-Control', 'no-store');
 
       next();
