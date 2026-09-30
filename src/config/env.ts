@@ -59,7 +59,10 @@ const environmentSchema = z
       .regex(/^\d+(?:b|kb|mb)$/i)
       .default('100kb'),
     CORS_ALLOWED_ORIGINS: commaSeparatedOriginsSchema,
-    EMAIL_PROVIDER: z.enum(['unconfigured', 'smtp', 'ses']).default('unconfigured'),
+    EMAIL_PROVIDER: z.enum(['unconfigured', 'resend']).default('unconfigured'),
+    RESEND_API_KEY: z.string().min(20).optional(),
+    RESEND_FROM_EMAIL: z.string().email().optional(),
+    RESEND_FROM_NAME: z.string().min(1).max(100).default('Alap'),
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
@@ -75,67 +78,24 @@ const environmentSchema = z
     PORT: z.coerce.number().int().min(1).max(65_535).default(4_000),
     REDIS_CONNECT_TIMEOUT_MS: z.coerce.number().int().min(100).max(60_000).default(5_000),
     REDIS_URL: redisUriSchema,
-    SES_FROM_EMAIL: z.string().email().optional(),
-    SES_REGION: z
-      .string()
-      .regex(/^[a-z]{2}(?:-gov)?-[a-z]+-\d$/)
-      .optional(),
-    SES_TEMPLATE_NAME: z
-      .string()
-      .min(1)
-      .max(64)
-      .regex(/^[A-Za-z0-9_-]+$/)
-      .optional(),
-    SMTP_FROM_EMAIL: z.string().email().optional(),
-    SMTP_HOST: z.string().min(1).max(253).optional(),
-    SMTP_PORT: z.coerce.number().int().min(1).max(65_535).optional(),
     REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(30),
-    PASSWORD_RESET_URL: z.string().url(),
     PASSWORD_RESET_TTL_MINUTES: z.coerce.number().int().min(5).max(60).default(15),
     SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
     TRUST_PROXY: z.enum(['false', 'loopback']).default('false'),
   })
   .superRefine((value, context) => {
-    const resetUrl = new URL(value.PASSWORD_RESET_URL);
-    const localResetHost = ['localhost', '127.0.0.1', '[::1]'].includes(resetUrl.hostname);
-    if (resetUrl.protocol !== 'https:' && (value.NODE_ENV === 'production' || !localResetHost)) {
-      context.addIssue({
-        code: 'custom',
-        message: 'Password reset URL must use HTTPS except on a local development host.',
-        path: ['PASSWORD_RESET_URL'],
-      });
-    }
-
-    if (value.EMAIL_PROVIDER === 'ses') {
-      for (const key of ['SES_FROM_EMAIL', 'SES_REGION', 'SES_TEMPLATE_NAME'] as const) {
+    if (value.EMAIL_PROVIDER === 'resend') {
+      for (const key of ['RESEND_API_KEY', 'RESEND_FROM_EMAIL'] as const) {
         if (!value[key]) {
           context.addIssue({
             code: 'custom',
-            message: `${key} is required when EMAIL_PROVIDER=ses.`,
+            message: `${key} is required when EMAIL_PROVIDER=resend.`,
             path: [key],
           });
         }
       }
     }
 
-    if (value.EMAIL_PROVIDER === 'smtp') {
-      if (value.NODE_ENV === 'production') {
-        context.addIssue({
-          code: 'custom',
-          message: 'The local SMTP adapter is not allowed in production.',
-          path: ['EMAIL_PROVIDER'],
-        });
-      }
-      for (const key of ['SMTP_FROM_EMAIL', 'SMTP_HOST', 'SMTP_PORT'] as const) {
-        if (!value[key]) {
-          context.addIssue({
-            code: 'custom',
-            message: `${key} is required when EMAIL_PROVIDER=smtp.`,
-            path: [key],
-          });
-        }
-      }
-    }
   });
 
 export type ApiConfig = Readonly<{
@@ -148,8 +108,7 @@ export type ApiConfig = Readonly<{
   corsAllowedOrigins: readonly string[];
   email:
     | Readonly<{ provider: 'unconfigured' }>
-    | Readonly<{ fromEmail: string; host: string; port: number; provider: 'smtp' }>
-    | Readonly<{ fromEmail: string; provider: 'ses'; region: string; templateName: string }>;
+    | Readonly<{ apiKey: string; fromEmail: string; fromName: string; provider: 'resend' }>;
   logLevel: z.infer<typeof environmentSchema>['LOG_LEVEL'];
   mongoMaxPoolSize: number;
   mongoServerSelectionTimeoutMs: number;
@@ -160,7 +119,6 @@ export type ApiConfig = Readonly<{
   redisUrl: string;
   refreshTokenTtlDays: number;
   passwordResetTtlMinutes: number;
-  passwordResetUrl: string;
   shutdownTimeoutMs: number;
   trustProxy: false | 'loopback';
 }>;
@@ -188,19 +146,12 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): ApiCon
   }
 
   let email: ApiConfig['email'];
-  if (result.data.EMAIL_PROVIDER === 'ses') {
+  if (result.data.EMAIL_PROVIDER === 'resend') {
     email = Object.freeze({
-      fromEmail: result.data.SES_FROM_EMAIL!,
-      provider: 'ses' as const,
-      region: result.data.SES_REGION!,
-      templateName: result.data.SES_TEMPLATE_NAME!,
-    });
-  } else if (result.data.EMAIL_PROVIDER === 'smtp') {
-    email = Object.freeze({
-      fromEmail: result.data.SMTP_FROM_EMAIL!,
-      host: result.data.SMTP_HOST!,
-      port: result.data.SMTP_PORT!,
-      provider: 'smtp' as const,
+      apiKey: result.data.RESEND_API_KEY!,
+      fromEmail: result.data.RESEND_FROM_EMAIL!,
+      fromName: result.data.RESEND_FROM_NAME,
+      provider: 'resend' as const,
     });
   } else {
     email = Object.freeze({ provider: 'unconfigured' as const });
@@ -231,7 +182,6 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): ApiCon
     redisUrl: result.data.REDIS_URL,
     refreshTokenTtlDays: result.data.REFRESH_TOKEN_TTL_DAYS,
     passwordResetTtlMinutes: result.data.PASSWORD_RESET_TTL_MINUTES,
-    passwordResetUrl: result.data.PASSWORD_RESET_URL,
     shutdownTimeoutMs: result.data.SHUTDOWN_TIMEOUT_MS,
     trustProxy: result.data.TRUST_PROXY === 'loopback' ? 'loopback' : false,
   });

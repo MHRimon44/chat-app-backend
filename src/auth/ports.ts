@@ -1,4 +1,4 @@
-import type { AuthUser, DeviceMetadata, PasswordResetRecord, SessionRecord } from './types.js';
+import type { AuthUser, DeviceMetadata, PasswordResetRecord, PendingRegistrationRecord, SessionRecord } from './types.js';
 
 export type NewUser = Readonly<{
   usernameNormalized: string;
@@ -12,6 +12,7 @@ export type NewUser = Readonly<{
 export interface AuthRepository {
   createUser(user: NewUser): Promise<AuthUser>;
   findUserByEmail(emailNormalized: string): Promise<AuthUser | null>;
+  findUserByUsername(usernameNormalized: string): Promise<AuthUser | null>;
   findUserById(userId: string): Promise<AuthUser | null>;
   findRefreshSessionId(tokenHash: string, now: Date): Promise<string | null>;
   isSessionActive(sessionId: string, userId: string, now: Date): Promise<boolean>;
@@ -30,14 +31,32 @@ export interface AuthRepository {
   revokeSession(sessionId: string, userId: string, reason: string, now: Date): Promise<boolean>;
   revokeAllSessions(userId: string, reason: string, now: Date): Promise<void>;
   listSessions(userId: string): Promise<readonly SessionRecord[]>;
+  upsertPendingRegistration(input: {
+    usernameNormalized: string;
+    displayName: string;
+    email: string;
+    emailNormalized: string;
+    passwordHash: string;
+    otpHash: string;
+    createdAt: Date;
+    expiresAt: Date;
+  }): Promise<PendingRegistrationRecord>;
+  findPendingRegistration(emailNormalized: string, now: Date): Promise<PendingRegistrationRecord | null>;
+  consumePendingRegistration(emailNormalized: string, now: Date): Promise<PendingRegistrationRecord | null>;
   createPasswordReset(input: {
     userId: string;
-    tokenHash: string;
+    otpHash: string;
     createdAt: Date;
     expiresAt: Date;
   }): Promise<PasswordResetRecord>;
+  findPasswordReset(userId: string, now: Date): Promise<PasswordResetRecord | null>;
+  verifyPasswordReset(input: {
+    resetId: string;
+    resetTokenHash: string;
+    now: Date;
+  }): Promise<boolean>;
   consumePasswordReset(input: {
-    tokenHash: string;
+    resetTokenHash: string;
     newPasswordHash: string;
     now: Date;
   }): Promise<AuthUser | null>;
@@ -54,10 +73,6 @@ export interface AccessTokenProvider {
     expiresAt: Date;
   }>;
   verify(token: string): Promise<{ userId: string; sessionId: string }>;
-}
-
-export interface RecoveryNotifier {
-  sendPasswordReset(input: { email: string; resetUrl: string; expiresAt: Date }): Promise<void>;
 }
 
 export interface RateLimiter {

@@ -1,9 +1,20 @@
 import mongoose, { type ClientSession } from 'mongoose';
 
 import { hashSensitiveValue } from './crypto.js';
-import { PasswordResetModel, RefreshTokenModel, SessionModel, UserModel } from './models.js';
+import {
+  PasswordResetModel,
+  PendingRegistrationModel,
+  RefreshTokenModel,
+  SessionModel,
+  UserModel,
+} from './models.js';
 import type { AuthRepository } from './ports.js';
-import type { AuthUser, PasswordResetRecord, SessionRecord } from './types.js';
+import type {
+  AuthUser,
+  PasswordResetRecord,
+  PendingRegistrationRecord,
+  SessionRecord,
+} from './types.js';
 
 export function createMongoAuthRepository(): AuthRepository {
   return {
@@ -24,6 +35,13 @@ export function createMongoAuthRepository(): AuthRepository {
 
     async findUserByEmail(emailNormalized) {
       const document = await UserModel.findOne({ emailNormalized }).select('+passwordHash').lean();
+      return document ? mapUser(document, true) : null;
+    },
+
+    async findUserByUsername(usernameNormalized) {
+      const document = await UserModel.findOne({ usernameNormalized })
+        .select('+passwordHash')
+        .lean();
       return document ? mapUser(document, true) : null;
     },
 
@@ -179,6 +197,41 @@ export function createMongoAuthRepository(): AuthRepository {
       return documents.map(mapSession);
     },
 
+    async upsertPendingRegistration(input) {
+      const document = await PendingRegistrationModel.findOneAndUpdate(
+        { emailNormalized: input.emailNormalized },
+        {
+          $set: {
+            usernameNormalized: input.usernameNormalized,
+            displayName: input.displayName,
+            emailDisplay: input.email,
+            passwordHash: input.passwordHash,
+            otpHash: input.otpHash,
+            expiresAt: input.expiresAt,
+          },
+          $setOnInsert: { createdAt: input.createdAt },
+        },
+        { new: true, upsert: true },
+      ).lean();
+      return mapPendingRegistration(document);
+    },
+
+    async findPendingRegistration(emailNormalized, now) {
+      const document = await PendingRegistrationModel.findOne({
+        emailNormalized,
+        expiresAt: { $gt: now },
+      }).lean();
+      return document ? mapPendingRegistration(document) : null;
+    },
+
+    async consumePendingRegistration(emailNormalized, now) {
+      const document = await PendingRegistrationModel.findOneAndDelete({
+        emailNormalized,
+        expiresAt: { $gt: now },
+      }).lean();
+      return document ? mapPendingRegistration(document) : null;
+    },
+
     async createPasswordReset(input) {
       await PasswordResetModel.updateMany(
         { userId: input.userId, consumedAt: { $exists: false } },
@@ -189,11 +242,36 @@ export function createMongoAuthRepository(): AuthRepository {
       return mapPasswordReset(created.toObject());
     },
 
+    async findPasswordReset(userId, now) {
+      const document = await PasswordResetModel.findOne({
+        userId,
+        consumedAt: { $exists: false },
+        expiresAt: { $gt: now },
+      })
+        .sort({ createdAt: -1 })
+        .lean();
+      return document ? mapPasswordReset(document) : null;
+    },
+
+    async verifyPasswordReset(input) {
+      const result = await PasswordResetModel.updateOne(
+        {
+          _id: input.resetId,
+          consumedAt: { $exists: false },
+          expiresAt: { $gt: input.now },
+          verifiedAt: { $exists: false },
+        },
+        { $set: { verifiedAt: input.now, resetTokenHash: input.resetTokenHash } },
+      );
+      return result.modifiedCount === 1;
+    },
+
     async consumePasswordReset(input) {
       return mongoose.connection.transaction(async (transaction) => {
         const token = await PasswordResetModel.findOneAndUpdate(
           {
-            tokenHash: input.tokenHash,
+            resetTokenHash: input.resetTokenHash,
+            verifiedAt: { $exists: true },
             consumedAt: { $exists: false },
             expiresAt: { $gt: input.now },
           },
@@ -272,14 +350,31 @@ function mapSession(value: unknown): SessionRecord {
   };
 }
 
+function mapPendingRegistration(value: unknown): PendingRegistrationRecord {
+  const record = asRecord(value);
+  return {
+    id: String(record._id),
+    usernameNormalized: asString(record.usernameNormalized),
+    displayName: asString(record.displayName),
+    email: asString(record.emailDisplay),
+    emailNormalized: asString(record.emailNormalized),
+    passwordHash: asString(record.passwordHash),
+    otpHash: asString(record.otpHash),
+    createdAt: asDate(record.createdAt),
+    expiresAt: asDate(record.expiresAt),
+  };
+}
+
 function mapPasswordReset(value: unknown): PasswordResetRecord {
   const record = asRecord(value);
   return {
     id: String(record._id),
     userId: String(record.userId),
-    tokenHash: String(record.tokenHash),
+    otpHash: String(record.otpHash),
     createdAt: asDate(record.createdAt),
     expiresAt: asDate(record.expiresAt),
+    ...(record.resetTokenHash ? { resetTokenHash: asString(record.resetTokenHash) } : {}),
+    ...(record.verifiedAt ? { verifiedAt: asDate(record.verifiedAt) } : {}),
     ...(record.consumedAt ? { consumedAt: asDate(record.consumedAt) } : {}),
   };
 }

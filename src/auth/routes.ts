@@ -24,6 +24,12 @@ const registerSchema = z.object({
   password: passwordSchema,
   device: deviceSchema.optional(),
 });
+const otpSchema = z.string().regex(/^\d{6}$/);
+const verifyRegistrationSchema = z.object({
+  email: emailSchema,
+  otp: otpSchema,
+  device: deviceSchema.optional(),
+});
 const loginSchema = z.object({
   email: emailSchema,
   password: z.string().min(1).max(128),
@@ -31,6 +37,7 @@ const loginSchema = z.object({
 });
 const refreshSchema = z.object({ refreshToken: z.string().min(40).max(200) });
 const forgotSchema = z.object({ email: emailSchema });
+const verifyResetOtpSchema = z.object({ email: emailSchema, otp: otpSchema });
 const resetSchema = z.object({ token: z.string().min(40).max(200), password: passwordSchema });
 const sessionParamsSchema = z.object({ sessionId: z.string().regex(/^[a-f\d]{24}$/i) });
 
@@ -40,11 +47,21 @@ export function createAuthRouter(auth: AuthService): Router {
 
   router.post('/register', async (request, response) => {
     const input = registerSchema.parse(request.body);
-    const pair = await auth.register({
+    const result = await auth.register({
       username: input.username,
       displayName: input.displayName,
       email: input.email,
       password: input.password,
+      device: requestDevice(request, input.device),
+    });
+    response.status(202).json({ data: result });
+  });
+
+  router.post('/register/verify', async (request, response) => {
+    const input = verifyRegistrationSchema.parse(request.body);
+    const pair = await auth.verifyRegistration({
+      email: input.email,
+      otp: input.otp,
       device: requestDevice(request, input.device),
     });
     response.status(201).json({ data: pair });
@@ -92,6 +109,11 @@ export function createAuthRouter(auth: AuthService): Router {
   router.post('/password/forgot', async (request, response) => {
     const { email } = forgotSchema.parse(request.body);
     response.json({ data: await auth.forgotPassword(email, request.ip) });
+  });
+
+  router.post('/password/verify-otp', async (request, response) => {
+    const input = verifyResetOtpSchema.parse(request.body);
+    response.json({ data: await auth.verifyPasswordResetOtp(input.email, input.otp, request.ip) });
   });
 
   router.post('/password/reset', async (request, response) => {

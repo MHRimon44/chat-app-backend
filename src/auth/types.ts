@@ -50,10 +50,24 @@ export type RefreshTokenRecord = Readonly<{
   replacedByTokenId?: string;
 }>;
 
+export type PendingRegistrationRecord = Readonly<{
+  id: string;
+  usernameNormalized: string;
+  displayName: string;
+  email: string;
+  emailNormalized: string;
+  passwordHash: string;
+  otpHash: string;
+  createdAt: Date;
+  expiresAt: Date;
+}>;
+
 export type PasswordResetRecord = Readonly<{
   id: string;
   userId: string;
-  tokenHash: string;
+  otpHash: string;
+  resetTokenHash?: string;
+  verifiedAt?: Date;
   createdAt: Date;
   expiresAt: Date;
   consumedAt?: Date;

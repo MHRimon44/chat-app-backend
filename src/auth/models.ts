@@ -48,10 +48,25 @@ export interface RefreshTokenDocument {
   updatedAt: Date;
 }
 
+export interface PendingRegistrationDocument {
+  _id: Types.ObjectId;
+  emailNormalized: string;
+  emailDisplay: string;
+  usernameNormalized: string;
+  displayName: string;
+  passwordHash: string;
+  otpHash: string;
+  expiresAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface PasswordResetDocument {
   _id: Types.ObjectId;
   userId: Types.ObjectId;
-  tokenHash: string;
+  otpHash: string;
+  resetTokenHash?: string;
+  verifiedAt?: Date;
   expiresAt: Date;
   consumedAt?: Date;
   createdAt: Date;
@@ -114,10 +129,26 @@ const refreshTokenSchema = new Schema(
 );
 refreshTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
+const pendingRegistrationSchema = new Schema(
+  {
+    emailNormalized: { type: String, required: true, unique: true },
+    emailDisplay: { type: String, required: true },
+    usernameNormalized: { type: String, required: true, unique: true },
+    displayName: { type: String, required: true },
+    passwordHash: { type: String, required: true },
+    otpHash: { type: String, required: true },
+    expiresAt: { type: Date, required: true },
+  },
+  { timestamps: true, versionKey: false },
+);
+pendingRegistrationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
 const passwordResetSchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, required: true, index: true },
-    tokenHash: { type: String, required: true, unique: true },
+    otpHash: { type: String, required: true },
+    resetTokenHash: { type: String, unique: true, sparse: true },
+    verifiedAt: Date,
     expiresAt: { type: Date, required: true },
     consumedAt: Date,
   },
@@ -134,6 +165,9 @@ export const SessionModel: Model<SessionDocument> =
 export const RefreshTokenModel: Model<RefreshTokenDocument> =
   (models.RefreshToken as Model<RefreshTokenDocument> | undefined) ??
   model<RefreshTokenDocument>('RefreshToken', refreshTokenSchema);
+export const PendingRegistrationModel: Model<PendingRegistrationDocument> =
+  (models.PendingRegistration as Model<PendingRegistrationDocument> | undefined) ??
+  model<PendingRegistrationDocument>('PendingRegistration', pendingRegistrationSchema);
 export const PasswordResetModel: Model<PasswordResetDocument> =
   (models.PasswordReset as Model<PasswordResetDocument> | undefined) ??
   model<PasswordResetDocument>('PasswordReset', passwordResetSchema);

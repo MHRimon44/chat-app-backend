@@ -1,7 +1,7 @@
 import { loadConfig } from '../config/env.js';
 import { createMongoConnection } from '../infrastructure/mongo.js';
 import { createLogger } from '../logging/logger.js';
-import { PasswordResetModel, RefreshTokenModel, SessionModel, UserModel } from '../auth/models.js';
+import { PasswordResetModel, PendingRegistrationModel, RefreshTokenModel, SessionModel, UserModel } from '../auth/models.js';
 import { ConversationMemberModel, ConversationModel } from '../conversations/models.js';
 import {
   MessageModel,
@@ -21,6 +21,7 @@ async function main(): Promise<void> {
       SessionModel.createIndexes(),
       RefreshTokenModel.createIndexes(),
       PasswordResetModel.createIndexes(),
+      PendingRegistrationModel.createIndexes(),
       ConversationModel.createIndexes(),
       ConversationMemberModel.createIndexes(),
       MessageModel.createIndexes(),

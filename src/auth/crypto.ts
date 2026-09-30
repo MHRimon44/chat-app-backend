@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomInt } from 'node:crypto';
 
 import argon2 from 'argon2';
 
@@ -29,4 +29,8 @@ export function hashOpaqueToken(token: string): string {
 
 export function hashSensitiveValue(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('base64url');
+}
+
+export function createNumericOtp(): string {
+  return randomInt(0, 1_000_000).toString().padStart(6, '0');
 }
