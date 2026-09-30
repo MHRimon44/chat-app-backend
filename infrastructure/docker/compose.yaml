@@ -22,7 +22,7 @@ services:
       - no-new-privileges:true
 
   mongo:
-    image: mongo:8.0.29-noble
+    image: mongo:8.0.30-noble
     restart: unless-stopped
     depends_on:
       mongo-keyfile-init:
@@ -67,7 +67,7 @@ services:
     stop_grace_period: 30s
 
   mongo-init:
-    image: mongo:8.0.29-noble
+    image: mongo:8.0.30-noble
     restart: 'no'
     depends_on:
       mongo:
