@@ -24,59 +24,30 @@ describe('API environment configuration', () => {
     expect(Object.isFrozen(config.corsAllowedOrigins)).toBe(true);
   });
 
-  it('requires complete SES configuration when the provider is enabled', () => {
-    expect(() =>
-      loadConfig({ ...validEnvironment, EMAIL_PROVIDER: 'ses', SES_REGION: 'ap-southeast-1' }),
-    ).toThrow(EnvironmentValidationError);
+  it('requires a Resend key and sender when enabled', () => {
+    expect(() => loadConfig({ ...validEnvironment, EMAIL_PROVIDER: 'resend' }))
+      .toThrow(EnvironmentValidationError);
   });
 
-  it('builds a typed SES configuration without static AWS credentials', () => {
+  it('loads a typed Resend email configuration', () => {
     const config = loadConfig({
       ...validEnvironment,
-      EMAIL_PROVIDER: 'ses',
-      SES_FROM_EMAIL: 'security@example.com',
-      SES_REGION: 'ap-southeast-1',
-      SES_TEMPLATE_NAME: 'password-reset-v1',
+      EMAIL_PROVIDER: 'resend',
+      RESEND_API_KEY: 're_test_placeholder_key_123456789',
+      RESEND_FROM_EMAIL: 'security@example.com',
+      RESEND_FROM_NAME: 'Alap',
     });
-
     expect(config.email).toEqual({
-      fromEmail: 'security@example.com',
-      provider: 'ses',
-      region: 'ap-southeast-1',
-      templateName: 'password-reset-v1',
+      provider: 'resend', apiKey: 're_test_placeholder_key_123456789',
+      fromEmail: 'security@example.com', fromName: 'Alap',
     });
   });
 
-  it('accepts local SMTP only outside production', () => {
-    const config = loadConfig({
-      ...validEnvironment,
-      EMAIL_PROVIDER: 'smtp',
-      PASSWORD_RESET_URL: 'http://localhost:3000/password/reset',
-      SMTP_FROM_EMAIL: 'security@chat.local',
-      SMTP_HOST: '127.0.0.1',
-      SMTP_PORT: '1025',
-    });
-
-    expect(config.email).toEqual({
-      fromEmail: 'security@chat.local',
-      host: '127.0.0.1',
-      port: 1025,
-      provider: 'smtp',
-    });
-  });
-
-  it('rejects local SMTP and HTTP reset links in production', () => {
-    expect(() =>
-      loadConfig({
-        ...validEnvironment,
-        EMAIL_PROVIDER: 'smtp',
-        NODE_ENV: 'production',
-        PASSWORD_RESET_URL: 'http://localhost:3000/password/reset',
-        SMTP_FROM_EMAIL: 'security@chat.local',
-        SMTP_HOST: '127.0.0.1',
-        SMTP_PORT: '1025',
-      }),
-    ).toThrow(EnvironmentValidationError);
+  it('rejects unsupported legacy email providers', () => {
+    for (const provider of ['ses', 'smtp', 'brevo']) {
+      expect(() => loadConfig({ ...validEnvironment, EMAIL_PROVIDER: provider }))
+        .toThrow(EnvironmentValidationError);
+    }
   });
 
   it('rejects wildcard CORS configuration', () => {

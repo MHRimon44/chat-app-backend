@@ -7,6 +7,18 @@ import type { AuthService } from '../src/auth/service.js';
 import type { MessageService, MessageView } from '../src/messages/service.js';
 import { createRealtimeServer } from '../src/realtime/socket-server.js';
 
+jest.mock('../src/auth/models.js', () => ({
+  UserModel: { updateOne: jest.fn(async () => ({ acknowledged: true })) },
+}));
+
+jest.mock('../src/conversations/models.js', () => ({
+  ConversationMemberModel: {
+    find: jest.fn(() => ({
+      select: jest.fn(() => ({ lean: jest.fn(async () => []) })),
+    })),
+  },
+}));
+
 const userId = '507f1f77bcf86cd799439011';
 const recipientId = '507f1f77bcf86cd799439013';
 const conversationId = '507f1f77bcf86cd799439012';
@@ -45,14 +57,17 @@ describe('Socket.IO authentication and messaging', () => {
     } as unknown as MessageService;
     const realtime = await createRealtimeServer({
       server,
-      config: { corsAllowedOrigins: ['https://app.example'], redisUrl: 'redis://localhost:6379' },
+      config: {
+        corsAllowedOrigins: ['https://app.example'],
+        redisUrl: 'redis://localhost:6379',
+      },
       auth,
       messages,
       logger: pino({ level: 'silent' }),
       enableRedisAdapter: false,
       loadConversationIds: async () => [conversationId],
       loadParticipantIds: async () => [userId, recipientId],
-      loadPresenceVisibility: async () => 'contacts',
+      loadPresenceVisibility: async () => 'everyone',
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
@@ -69,8 +84,7 @@ describe('Socket.IO authentication and messaging', () => {
       auth: { accessToken: 'recipient-access-token' },
       transports: ['websocket'],
     });
-    await once(client, 'connect');
-    await once(recipient, 'connect');
+    await Promise.all([once(client, 'connect'), once(recipient, 'connect')]);
     const emitted = once(recipient, 'message:created');
     const acknowledgement = await new Promise<unknown>((resolve) => {
       client?.emit(

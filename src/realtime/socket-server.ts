@@ -116,7 +116,7 @@ export async function createRealtimeServer(input: {
     const presenceVisibility = input.loadPresenceVisibility
       ? await input.loadPresenceVisibility(auth.userId)
       : (await UserModel.findById(auth.userId).select({ presenceVisibility: 1 }).lean())
-          ?.presenceVisibility;
+          ?.presenceVisibility ?? 'everyone';
     const shouldPublishPresence = presenceVisibility !== 'nobody';
     const becameOnline = await addPresence(auth.userId, socket.id);
     if (becameOnline && shouldPublishPresence)

@@ -12,12 +12,9 @@ const readiness: ReadinessProbe = {
 function createAuthStub(): AuthService {
   return {
     authenticateAccess: jest.fn(async () => ({ userId: 'user-1', sessionId: 'session-1' })),
-    register: jest.fn(async () => ({
-      accessToken: 'access-token',
-      accessTokenExpiresAt: '2026-08-27T12:10:00.000Z',
-      refreshToken: 'r'.repeat(43),
-      user: { id: 'user-1', displayName: 'Mehedi', email: 'mehedi@example.com' },
-    })),
+    register: jest.fn(async () => ({ message: 'A verification code has been sent to your email.' })),
+    verifyRegistration: jest.fn(),
+    verifyPasswordResetOtp: jest.fn(),
     login: jest.fn(),
     refresh: jest.fn(),
     logout: jest.fn(),
@@ -48,9 +45,9 @@ describe('authentication HTTP routes', () => {
         password: 'a secure passphrase',
         device: { platform: 'android', deviceName: 'Pixel' },
       })
-      .expect(201);
+      .expect(202);
 
-    expect(response.body).toMatchObject({ data: { accessToken: 'access-token' } });
+    expect(response.body).toMatchObject({ data: { message: 'A verification code has been sent to your email.' } });
     expect(auth.register).toHaveBeenCalledWith(
       expect.objectContaining({
         username: 'mehedi',
