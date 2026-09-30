@@ -3,12 +3,11 @@
 set -Eeuo pipefail
 
 readonly repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly infrastructure_env="${repository_root}/infrastructure/docker/.env"
 readonly api_env="${repository_root}/.env"
 
-if [[ -e "${infrastructure_env}" || -e "${api_env}" ]]; then
-  echo 'Local environment files already exist; no files were overwritten.' >&2
-  echo 'Move or remove both ignored .env files only if you intentionally want fresh local data.' >&2
+if [[ -e "${api_env}" ]]; then
+  echo 'Root .env already exists; no files were overwritten.' >&2
+  echo 'Move or remove .env only if you intentionally want fresh local data.' >&2
   exit 1
 fi
 
@@ -36,6 +35,8 @@ access_public_key_base64="$(openssl base64 -A -in "${task_temp_dir}/access-publi
 
 umask 077
 {
+  echo '# Activate exactly one section. Restart the backend after switching.'
+  echo '# Dev'
   echo 'COMPOSE_PROJECT_NAME=production-chat-local'
   echo 'MONGO_ROOT_USERNAME=chat_local_admin'
   echo "MONGO_ROOT_PASSWORD=${mongo_root_password}"
@@ -43,7 +44,7 @@ umask 077
   echo 'MONGO_APP_USERNAME=chat_app'
   echo "MONGO_APP_PASSWORD=${mongo_app_password}"
   echo "REDIS_PASSWORD=${redis_password}"
-} > "${infrastructure_env}"
+} > "${api_env}"
 
 {
   echo 'NODE_ENV=development'
@@ -70,7 +71,9 @@ umask 077
   echo 'LOG_LEVEL=info'
   echo 'SHUTDOWN_TIMEOUT_MS=10000'
   echo 'TRUST_PROXY=false'
-} > "${api_env}"
+} >> "${api_env}"
 
-echo 'Created protected local environment files with independent random credentials.'
+sed -n '/^# Prod$/,$p' "${repository_root}/.env.example" >> "${api_env}"
+
+echo 'Created root .env with Dev credentials and a commented Prod section.'
 echo 'Next: corepack yarn infra:up'

@@ -6,11 +6,11 @@ readonly script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly docker_directory="$(cd -- "${script_directory}/.." && pwd)"
 readonly compose="${script_directory}/compose.sh"
 
-mongo_root_username="$(sed -n 's/^MONGO_ROOT_USERNAME=//p' "${docker_directory}/.env")"
-mongo_root_password="$(sed -n 's/^MONGO_ROOT_PASSWORD=//p' "${docker_directory}/.env")"
-mongo_app_database="$(sed -n 's/^MONGO_APP_DATABASE=//p' "${docker_directory}/.env")"
-mongo_app_username="$(sed -n 's/^MONGO_APP_USERNAME=//p' "${docker_directory}/.env")"
-mongo_app_password="$(sed -n 's/^MONGO_APP_PASSWORD=//p' "${docker_directory}/.env")"
+mongo_root_username="$(sed -n 's/^MONGO_ROOT_USERNAME=//p' "${docker_directory}/../../.env")"
+mongo_root_password="$(sed -n 's/^MONGO_ROOT_PASSWORD=//p' "${docker_directory}/../../.env")"
+mongo_app_database="$(sed -n 's/^MONGO_APP_DATABASE=//p' "${docker_directory}/../../.env")"
+mongo_app_username="$(sed -n 's/^MONGO_APP_USERNAME=//p' "${docker_directory}/../../.env")"
+mongo_app_password="$(sed -n 's/^MONGO_APP_PASSWORD=//p' "${docker_directory}/../../.env")"
 
 "${compose}" exec -T \
   -e MONGO_APP_DATABASE="${mongo_app_database}" \

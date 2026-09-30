@@ -7,12 +7,8 @@ import { passwordHasher } from './auth/crypto.js';
 import { createAccessTokenProvider } from './auth/jwt.js';
 import { createMongoAuthRepository } from './auth/mongo-repository.js';
 import { createRedisRateLimiter } from './auth/redis-rate-limiter.js';
-import { createUnconfiguredRecoveryNotifier } from './auth/recovery-notifier.js';
-import {
-  createAwsSesEmailClient,
-  createSesRecoveryNotifier,
-} from './auth/ses-recovery-notifier.js';
-import { createSmtpRecoveryNotifier } from './auth/smtp-recovery-notifier.js';
+import { createResendEmailNotifier } from './auth/resend-email-notifier.js';
+import { createUnconfiguredEmailNotifier } from './auth/email-notifier.js';
 import { createAuthService } from './auth/service.js';
 import { createMongoConversationRepository } from './conversations/repository.js';
 import { createConversationService } from './conversations/service.js';
@@ -52,16 +48,10 @@ async function main(): Promise<void> {
   }
 
   const readiness = createReadinessProbe({ mongo, redis });
-  const recoveryNotifier =
-    config.email.provider === 'ses'
-      ? createSesRecoveryNotifier({
-          client: createAwsSesEmailClient(config.email.region),
-          fromEmail: config.email.fromEmail,
-          templateName: config.email.templateName,
-        })
-      : config.email.provider === 'smtp'
-        ? createSmtpRecoveryNotifier(config.email)
-        : createUnconfiguredRecoveryNotifier(logger);
+  const emailNotifier =
+    config.email.provider === 'resend'
+      ? createResendEmailNotifier(config.email)
+      : createUnconfiguredEmailNotifier(logger);
   const auth = createAuthService({
     accessTokens: createAccessTokenProvider({
       audience: config.accessTokenAudience,
@@ -72,11 +62,10 @@ async function main(): Promise<void> {
     }),
     passwordHasher,
     rateLimiter: createRedisRateLimiter(redis),
-    recoveryNotifier,
+    emailNotifier,
     repository: createMongoAuthRepository(),
     refreshTokenTtlDays: config.refreshTokenTtlDays,
     resetTtlMinutes: config.passwordResetTtlMinutes,
-    resetUrl: config.passwordResetUrl,
   });
   const rateLimiter = createRedisRateLimiter(redis);
   const userRepository = createMongoUserRepository();

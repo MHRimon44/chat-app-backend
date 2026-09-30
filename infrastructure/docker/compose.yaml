@@ -22,7 +22,7 @@ services:
       - no-new-privileges:true
 
   mongo:
-    image: mongo:8.0.29-noble
+    image: mongo:8.0.30-noble
     restart: unless-stopped
     depends_on:
       mongo-keyfile-init:
@@ -37,8 +37,8 @@ services:
       - --setParameter
       - diagnosticDataCollectionEnabled=false
     environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?Set MONGO_ROOT_USERNAME in infrastructure/docker/.env}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD in infrastructure/docker/.env}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?Set MONGO_ROOT_USERNAME in root .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD in root .env}
     ports:
       - '127.0.0.1:27017:27017'
     volumes:
@@ -67,17 +67,17 @@ services:
     stop_grace_period: 30s
 
   mongo-init:
-    image: mongo:8.0.29-noble
+    image: mongo:8.0.30-noble
     restart: 'no'
     depends_on:
       mongo:
         condition: service_healthy
     environment:
-      MONGO_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?Set MONGO_ROOT_USERNAME in infrastructure/docker/.env}
-      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD in infrastructure/docker/.env}
+      MONGO_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?Set MONGO_ROOT_USERNAME in root .env}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD in root .env}
       MONGO_APP_DATABASE: ${MONGO_APP_DATABASE:-chat_app}
       MONGO_APP_USERNAME: ${MONGO_APP_USERNAME:-chat_app}
-      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?Set MONGO_APP_PASSWORD in infrastructure/docker/.env}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?Set MONGO_APP_PASSWORD in root .env}
     entrypoint:
       - /bin/bash
       - /scripts/init-mongo.sh
@@ -93,7 +93,7 @@ services:
     image: redis:7.2.16-alpine3.21
     restart: unless-stopped
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in infrastructure/docker/.env}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in root .env}
     command:
       - /bin/sh
       - -ec

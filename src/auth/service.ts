@@ -1,18 +1,19 @@
 import { randomUUID } from 'node:crypto';
 
 import { AppError } from '../errors/app-error.js';
-import { createOpaqueToken, hashOpaqueToken, hashSensitiveValue } from './crypto.js';
+import { createNumericOtp, createOpaqueToken, hashOpaqueToken, hashSensitiveValue } from './crypto.js';
+import type { EmailNotifier } from './email-notifier.js';
 import type {
   AccessTokenProvider,
   AuthRepository,
   PasswordHasher,
   RateLimiter,
-  RecoveryNotifier,
 } from './ports.js';
 import type { AuthUser, DeviceMetadata, PublicAuthUser, SessionView, TokenPair } from './types.js';
 
 const GENERIC_RECOVERY_MESSAGE =
-  'If an account matches that email, password reset instructions will be sent.';
+  'If an account matches that email, a password reset code will be sent.';
+const REGISTRATION_MESSAGE = 'A verification code has been sent to your email.';
 
 export interface AuthService {
   authenticateAccess(token: string): Promise<{ userId: string; sessionId: string }>;
@@ -22,6 +23,11 @@ export interface AuthService {
     email: string;
     password: string;
     device: DeviceMetadata;
+  }): Promise<{ message: string }>;
+  verifyRegistration(input: {
+    email: string;
+    otp: string;
+    device: DeviceMetadata;
   }): Promise<TokenPair>;
   login(input: { email: string; password: string; device: DeviceMetadata }): Promise<TokenPair>;
   refresh(refreshToken: string): Promise<TokenPair>;
@@ -30,6 +36,7 @@ export interface AuthService {
   revokeSession(userId: string, sessionId: string): Promise<void>;
   listSessions(userId: string, currentSessionId: string): Promise<readonly SessionView[]>;
   forgotPassword(email: string, ip?: string): Promise<{ message: string }>;
+  verifyPasswordResetOtp(email: string, otp: string, ip?: string): Promise<{ resetToken: string }>;
   resetPassword(token: string, newPassword: string): Promise<void>;
 }
 
@@ -38,11 +45,10 @@ export function createAuthService(dependencies: {
   now?: () => Date;
   passwordHasher: PasswordHasher;
   rateLimiter: RateLimiter;
-  recoveryNotifier: RecoveryNotifier;
+  emailNotifier: EmailNotifier;
   repository: AuthRepository;
   refreshTokenTtlDays: number;
   resetTtlMinutes: number;
-  resetUrl: string;
 }): AuthService {
   const now = dependencies.now ?? (() => new Date());
 
@@ -98,22 +104,105 @@ export function createAuthService(dependencies: {
       email: string;
       password: string;
       device: DeviceMetadata;
-    }): Promise<TokenPair> {
+    }): Promise<{ message: string }> {
       const emailNormalized = normalizeEmail(input.email);
-      await enforceLimit(
-        `register:ip:${hashSensitiveValue(input.device.ip ?? 'unknown')}`,
-        5,
-        3_600,
-      );
-      const passwordHash = await dependencies.passwordHasher.hash(input.password);
-      let user: AuthUser;
+      await Promise.all([
+        enforceLimit(`register:ip:${hashSensitiveValue(input.device.ip ?? 'unknown')}`, 5, 3_600),
+        enforceLimit(`register:email:${hashSensitiveValue(emailNormalized)}`, 3, 3_600),
+      ]);
+
+      const usernameNormalized = normalizeUsername(input.username);
+      const [existingEmail, existingUsername] = await Promise.all([
+        dependencies.repository.findUserByEmail(emailNormalized),
+        dependencies.repository.findUserByUsername(usernameNormalized),
+      ]);
+      if (existingEmail || existingUsername) {
+        throw new AppError({
+          code: 'ACCOUNT_EXISTS',
+          message: 'That email or username is already in use.',
+          statusCode: 409,
+        });
+      }
+
+      const currentTime = now();
+      const expiresAt = new Date(currentTime.getTime() + dependencies.resetTtlMinutes * 60_000);
+      const otp = createNumericOtp();
+      const [passwordHash, otpHash] = await Promise.all([
+        dependencies.passwordHasher.hash(input.password),
+        dependencies.passwordHasher.hash(otp),
+      ]);
+
       try {
-        user = await dependencies.repository.createUser({
-          usernameNormalized: normalizeUsername(input.username),
+        await dependencies.repository.upsertPendingRegistration({
+          usernameNormalized,
           displayName: input.displayName.trim(),
           email: input.email.trim(),
           emailNormalized,
           passwordHash,
+          otpHash,
+          createdAt: currentTime,
+          expiresAt,
+        });
+      } catch (error) {
+        if (isDuplicateError(error)) {
+          throw new AppError({
+            code: 'ACCOUNT_EXISTS',
+            message: 'That email or username is already in use.',
+            statusCode: 409,
+          });
+        }
+        throw error;
+      }
+
+      await dependencies.emailNotifier.sendOtp({
+        email: input.email.trim(),
+        otp,
+        purpose: 'registration',
+        expiresAt,
+      });
+      return { message: REGISTRATION_MESSAGE };
+    },
+
+    async verifyRegistration(input: {
+      email: string;
+      otp: string;
+      device: DeviceMetadata;
+    }): Promise<TokenPair> {
+      const emailNormalized = normalizeEmail(input.email);
+      await enforceLimit(
+        `register:verify:${hashSensitiveValue(`${emailNormalized}:${input.device.ip ?? 'unknown'}`)}`,
+        5,
+        900,
+      );
+      const pending = await dependencies.repository.findPendingRegistration(emailNormalized, now());
+      const valid = pending
+        ? await dependencies.passwordHasher.verify(pending.otpHash, input.otp)
+        : false;
+      if (!pending || !valid) {
+        throw new AppError({
+          code: 'INVALID_OTP',
+          message: 'The verification code is invalid or expired.',
+          statusCode: 400,
+        });
+      }
+
+      const consumed = await dependencies.repository.consumePendingRegistration(emailNormalized, now());
+      if (!consumed) {
+        throw new AppError({
+          code: 'INVALID_OTP',
+          message: 'The verification code is invalid or expired.',
+          statusCode: 400,
+        });
+      }
+
+      let user: AuthUser;
+      try {
+        user = await dependencies.repository.createUser({
+          usernameNormalized: consumed.usernameNormalized,
+          displayName: consumed.displayName,
+          email: consumed.email,
+          emailNormalized: consumed.emailNormalized,
+          passwordHash: consumed.passwordHash,
           passwordChangedAt: now(),
         });
       } catch (error) {
@@ -217,20 +306,20 @@ export function createAuthService(dependencies: {
       ]);
       const user = await dependencies.repository.findUserByEmail(normalized);
       if (user?.status === 'active') {
-        const token = createOpaqueToken();
+        const otp = createNumericOtp();
         const createdAt = now();
         const expiresAt = new Date(createdAt.getTime() + dependencies.resetTtlMinutes * 60_000);
+        const otpHash = await dependencies.passwordHasher.hash(otp);
         await dependencies.repository.createPasswordReset({
           userId: user.id,
-          tokenHash: hashOpaqueToken(token),
+          otpHash,
           createdAt,
           expiresAt,
         });
-        const resetUrl = new URL(dependencies.resetUrl);
-        resetUrl.searchParams.set('token', token);
-        await dependencies.recoveryNotifier.sendPasswordReset({
+        await dependencies.emailNotifier.sendOtp({
           email: user.email,
-          resetUrl: resetUrl.toString(),
+          otp,
+          purpose: 'password_reset',
           expiresAt,
         });
       } else {
@@ -239,11 +328,53 @@ export function createAuthService(dependencies: {
       return { message: GENERIC_RECOVERY_MESSAGE };
     },
 
+    async verifyPasswordResetOtp(
+      email: string,
+      otp: string,
+      ip?: string,
+    ): Promise<{ resetToken: string }> {
+      const normalized = normalizeEmail(email);
+      await enforceLimit(
+        `forgot:verify:${hashSensitiveValue(`${normalized}:${ip ?? 'unknown'}`)}`,
+        5,
+        900,
+      );
+      const user = await dependencies.repository.findUserByEmail(normalized);
+      const reset = user
+        ? await dependencies.repository.findPasswordReset(user.id, now())
+        : null;
+      const valid = reset
+        ? await dependencies.passwordHasher.verify(reset.otpHash, otp)
+        : false;
+      if (!reset || !valid) {
+        throw new AppError({
+          code: 'INVALID_OTP',
+          message: 'The verification code is invalid or expired.',
+          statusCode: 400,
+        });
+      }
+
+      const resetToken = createOpaqueToken();
+      const verified = await dependencies.repository.verifyPasswordReset({
+        resetId: reset.id,
+        resetTokenHash: hashOpaqueToken(resetToken),
+        now: now(),
+      });
+      if (!verified) {
+        throw new AppError({
+          code: 'INVALID_OTP',
+          message: 'The verification code is invalid or expired.',
+          statusCode: 400,
+        });
+      }
+      return { resetToken };
+    },
+
     async resetPassword(token: string, newPassword: string): Promise<void> {
       const currentTime = now();
       const passwordHash = await dependencies.passwordHasher.hash(newPassword);
       const user = await dependencies.repository.consumePasswordReset({
-        tokenHash: hashOpaqueToken(token),
+        resetTokenHash: hashOpaqueToken(token),
         newPasswordHash: passwordHash,
         now: currentTime,
       });
@@ -255,6 +386,7 @@ export function createAuthService(dependencies: {
         });
       }
     },
+
   };
 
   async function createSessionPair(user: AuthUser, device: DeviceMetadata): Promise<TokenPair> {

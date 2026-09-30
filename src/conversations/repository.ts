@@ -21,6 +21,19 @@ export function createMongoConversationRepository(): ConversationRepository {
   return {
     async createDirect(actorId, otherUserId, now) {
       const directKey = canonicalDirectKey(actorId, otherUserId);
+
+      const existing = await ConversationModel.findOne({ directKey, type: 'direct' })
+        .sort({ createdAt: 1, _id: 1 })
+        .lean();
+      if (existing) {
+        await ConversationMemberModel.updateOne(
+          { conversationId: existing._id, userId: actorId },
+          { $unset: { hiddenAt: 1 } },
+        );
+        const view = await getView(actorId, String(existing._id));
+        if (view) return view;
+      }
+
       try {
         const conversationId = await mongoose.connection.transaction(async (transaction) => {
           const [conversation] = await ConversationModel.create(
@@ -46,13 +59,15 @@ export function createMongoConversationRepository(): ConversationRepository {
         return created;
       } catch (error) {
         if (!isDuplicateError(error)) throw error;
-        const existing = await ConversationModel.findOne({ directKey, type: 'direct' }).lean();
-        if (!existing) throw error;
+        const existingAfterRace = await ConversationModel.findOne({ directKey, type: 'direct' })
+          .sort({ createdAt: 1, _id: 1 })
+          .lean();
+        if (!existingAfterRace) throw error;
         await ConversationMemberModel.updateOne(
-          { conversationId: existing._id, userId: actorId },
+          { conversationId: existingAfterRace._id, userId: actorId },
           { $unset: { hiddenAt: 1 } },
         );
-        const view = await getView(actorId, String(existing._id));
+        const view = await getView(actorId, String(existingAfterRace._id));
         if (!view) throw error;
         return view;
       }
