@@ -11,6 +11,7 @@ export interface UserDocument {
   bio?: string;
   avatarKey?: string;
   presenceVisibility: 'everyone' | 'contacts' | 'nobody';
+  lastSeenAt?: Date;
   passwordHash: string;
   passwordChangedAt: Date;
   status: 'active' | 'disabled';
@@ -87,6 +88,7 @@ const userSchema = new Schema(
       default: 'everyone',
       required: true,
     },
+    lastSeenAt: Date,
     passwordHash: { type: String, required: true, select: false },
     passwordChangedAt: { type: Date, required: true },
     status: { type: String, enum: ['active', 'disabled'], default: 'active', required: true },

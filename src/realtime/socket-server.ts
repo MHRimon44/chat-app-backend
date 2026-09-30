@@ -31,6 +31,7 @@ const typingSchema = z.object({
   conversationId: z.string().regex(/^[a-f\d]{24}$/i),
   isTyping: z.boolean(),
 });
+const presenceLookupSchema = z.object({ userId: z.string().regex(/^[a-f\d]{24}$/i) });
 const receiptSchema = z.object({
   conversationId: z.string().regex(/^[a-f\d]{24}$/i),
   messageId: z.string().regex(/^[a-f\d]{24}$/i),
@@ -119,11 +120,7 @@ export async function createRealtimeServer(input: {
     const shouldPublishPresence = presenceVisibility !== 'nobody';
     const becameOnline = await addPresence(auth.userId, socket.id);
     if (becameOnline && shouldPublishPresence)
-      io.to(conversationRooms).emit('presence:changed', {
-        userId: auth.userId,
-        status: 'online',
-        updatedAt: new Date().toISOString(),
-      });
+      await publishVisiblePresence(auth.userId, 'online', presenceVisibility);
     const heartbeat = setInterval(() => {
       void refreshPresence(auth.userId, socket.id);
     }, 30_000);
@@ -142,15 +139,51 @@ export async function createRealtimeServer(input: {
           isTyping: false,
           expiresAt: new Date().toISOString(),
         });
-      void removePresence(auth.userId, socket.id).then((becameOffline) => {
-        if (becameOffline && shouldPublishPresence)
-          io.to(conversationRooms).emit('presence:changed', {
-            userId: auth.userId,
-            status: 'offline',
-            lastSeenAt: new Date().toISOString(),
+      void removePresence(auth.userId, socket.id).then(async (becameOffline) => {
+        if (!becameOffline) return;
+        const lastSeenAt = new Date();
+        await UserModel.updateOne({ _id: auth.userId }, { $set: { lastSeenAt } });
+        if (shouldPublishPresence)
+          await publishVisiblePresence(auth.userId, 'offline', presenceVisibility, lastSeenAt.toISOString());
+      }).catch((error: unknown) => input.logger.warn({ error }, 'Presence disconnect update failed'));
+    });
+
+    socket.on('presence:get', (payload: unknown, acknowledge: Ack) => {
+      void (async () => {
+        try {
+          const { userId } = presenceLookupSchema.parse(payload);
+          const visibility = await visibilityFor(userId);
+          const permitted = await canSeePresence(auth.userId, userId, visibility);
+          const online = permitted && (await isOnline(userId));
+          const lastSeen = permitted && !online
+            ? await UserModel.findById(userId).select({ lastSeenAt: 1 }).lean()
+            : null;
+          acknowledge({ ok: true, data: {
+            userId,
+            status: !permitted ? 'unknown' : online ? 'online' : 'offline',
             updatedAt: new Date().toISOString(),
-          });
-      });
+            ...(permitted && !online && lastSeen?.lastSeenAt
+              ? { lastSeenAt: lastSeen.lastSeenAt.toISOString() } : {}),
+          } });
+        } catch {
+          acknowledge(rejected('PRESENCE_LOOKUP_REJECTED', socket.id));
+        }
+      })();
+    });
+
+    socket.on('presence:visibilityChanged', (_payload: unknown, acknowledge: Ack) => {
+      void (async () => {
+        try {
+          // Read the saved preference from MongoDB; never trust a client-supplied visibility.
+          const current = await visibilityFor(auth.userId);
+          await publishVisiblePresence(auth.userId, 'unknown', current);
+          if (current !== 'nobody' && await isOnline(auth.userId))
+            await publishVisiblePresence(auth.userId, 'online', current);
+          acknowledge({ ok: true, data: { updated: true } });
+        } catch {
+          acknowledge(rejected('PRESENCE_UPDATE_REJECTED', socket.id));
+        }
+      })();
     });
 
     socket.on('message:send', (payload: unknown, acknowledge: Ack) => {
@@ -312,6 +345,59 @@ export async function createRealtimeServer(input: {
       } catch {
         acknowledge(rejected('RECEIPT_REJECTED', socket.id));
       }
+    }
+  }
+
+  async function visibilityFor(userId: string): Promise<'everyone' | 'contacts' | 'nobody'> {
+    if (input.loadPresenceVisibility) return input.loadPresenceVisibility(userId);
+    const user = await UserModel.findById(userId).select({ presenceVisibility: 1 }).lean();
+    return user?.presenceVisibility ?? 'nobody';
+  }
+
+  async function canSeePresence(viewerId: string, targetId: string, visibility: string): Promise<boolean> {
+    if (viewerId === targetId) return true;
+    if (visibility === 'nobody') return false;
+    if (visibility === 'everyone') return true;
+    const targetConversations = await ConversationMemberModel.find({ userId: targetId })
+      .select({ conversationId: 1 }).lean();
+    if (targetConversations.length === 0) return false;
+    return Boolean(await ConversationMemberModel.exists({
+      userId: viewerId,
+      conversationId: { $in: targetConversations.map((member) => member.conversationId) },
+    }));
+  }
+
+  async function isOnline(userId: string): Promise<boolean> {
+    if (publisher) {
+      const key = `presence:user:${userId}`;
+      await publisher.zRemRangeByScore(key, 0, Date.now());
+      return (await publisher.zCard(key)) > 0;
+    }
+    return (localPresence.get(userId)?.size ?? 0) > 0;
+  }
+
+  async function publishVisiblePresence(
+    userId: string,
+    status: 'online' | 'offline' | 'unknown',
+    visibility: 'everyone' | 'contacts' | 'nobody',
+    lastSeenAt?: string,
+  ): Promise<void> {
+    const members = await ConversationMemberModel.find({ userId }).select({ conversationId: 1 }).lean();
+    if (members.length === 0) return;
+    const peers = await ConversationMemberModel.find({
+      conversationId: { $in: members.map((member) => member.conversationId) },
+      userId: { $ne: userId },
+    }).select({ userId: 1 }).lean();
+    const peerIds = new Set(peers.map((member) => String(member.userId)));
+    const updatedAt = new Date().toISOString();
+    for (const peerId of peerIds) {
+      const permitted = await canSeePresence(peerId, userId, visibility);
+      io.to(`user:${peerId}`).emit('presence:changed', {
+        userId,
+        status: permitted ? status : 'unknown',
+        updatedAt,
+        ...(permitted && status === 'offline' ? { lastSeenAt: lastSeenAt ?? updatedAt } : {}),
+      });
     }
   }
 
