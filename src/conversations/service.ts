@@ -7,6 +7,7 @@ export interface ConversationService {
   createDirect(actorId: string, otherUserId: string): Promise<ConversationView>;
   get(actorId: string, conversationId: string): Promise<ConversationView>;
   list(actorId: string, input: { cursor?: string; limit: number }): Promise<ConversationPage>;
+  listHidden(actorId: string, input: { cursor?: string; limit: number }): Promise<ConversationPage>;
   setHidden(actorId: string, conversationId: string, hidden: boolean): Promise<void>;
   updateSettings(
     actorId: string,
@@ -43,6 +44,9 @@ export function createConversationService(
     },
     list(actorId, input) {
       return conversations.list(actorId, input);
+    },
+    listHidden(actorId, input) {
+      return conversations.listHidden(actorId, input);
     },
     setHidden(actorId, conversationId, hidden) {
       return conversations.setHidden(actorId, conversationId, hidden, now());

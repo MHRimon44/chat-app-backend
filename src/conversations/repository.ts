@@ -9,6 +9,7 @@ export interface ConversationRepository {
   createDirect(actorId: string, otherUserId: string, now: Date): Promise<ConversationView>;
   getForMember(actorId: string, conversationId: string): Promise<ConversationView | null>;
   list(actorId: string, input: { cursor?: string; limit: number }): Promise<ConversationPage>;
+  listHidden(actorId: string, input: { cursor?: string; limit: number }): Promise<ConversationPage>;
   setHidden(actorId: string, conversationId: string, hidden: boolean, now: Date): Promise<void>;
   updateSettings(
     actorId: string,
@@ -86,6 +87,37 @@ export function createMongoConversationRepository(): ConversationRepository {
       const members = await ConversationMemberModel.find({
         userId: actorId,
         hiddenAt: { $exists: false },
+        ...cursorFilter,
+      })
+        .sort({ sortAt: -1, _id: -1 })
+        .limit(input.limit + 1)
+        .lean();
+      const hasMore = members.length > input.limit;
+      const page = members.slice(0, input.limit);
+      const views = await Promise.all(
+        page.map((member) => getView(actorId, String(member.conversationId))),
+      );
+      const items = views.filter((value): value is ConversationView => value !== null);
+      const tail = page.at(-1);
+      return {
+        items,
+        hasMore,
+        nextCursor: hasMore && tail ? encodeCursor(tail.sortAt, String(tail._id)) : null,
+      };
+    },
+    async listHidden(actorId, input) {
+      const decoded = input.cursor ? decodeCursor(input.cursor) : null;
+      const cursorFilter = decoded
+        ? {
+            $or: [
+              { sortAt: { $lt: decoded.sortAt } },
+              { sortAt: decoded.sortAt, _id: { $lt: new Types.ObjectId(decoded.id) } },
+            ],
+          }
+        : {};
+      const members = await ConversationMemberModel.find({
+        userId: actorId,
+        hiddenAt: { $exists: true },
         ...cursorFilter,
       })
         .sort({ sortAt: -1, _id: -1 })

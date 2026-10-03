@@ -26,6 +26,7 @@ function setup(userExists = true) {
     createDirect: jest.fn(async () => view),
     getForMember: jest.fn(async () => view),
     list: jest.fn(async () => ({ items: [view], nextCursor: null, hasMore: false })),
+    listHidden: jest.fn(async () => ({ items: [], hasMore: false, nextCursor: null })), 
     setHidden: jest.fn(async () => undefined),
     updateSettings: jest.fn(async () => view),
   };

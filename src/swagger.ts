@@ -511,6 +511,19 @@ export const openApiDocument = {
       }),
     },
 
+    '/conversations/hidden': {
+      get: operation('Conversations', 'List your hidden conversations', {
+        parameters: [
+          parameter('cursor', {
+            type: 'string',
+            minLength: 1,
+            maxLength: 500,
+          }),
+          limit(50, 30),
+        ],
+      }),
+    },
+
     '/conversations/direct': {
       post: operation('Conversations', 'Create or return a direct conversation', {
         status: 201,

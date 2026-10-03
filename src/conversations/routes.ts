@@ -44,6 +44,19 @@ export function createConversationRouter(auth: AuthService, service: Conversatio
     });
   });
 
+  router.get('/hidden', async (request, response) => {
+    const actor = getAuthContext(response.locals);
+    const query = listSchema.parse(request.query);
+    const page = await service.listHidden(actor.userId, {
+      ...(query.cursor ? { cursor: query.cursor } : {}),
+      limit: query.limit,
+    });
+    response.json({
+      data: page.items,
+      page: { nextCursor: page.nextCursor, hasMore: page.hasMore },
+    });
+  });
+
   router.get('/:conversationId', async (request, response) => {
     const actor = getAuthContext(response.locals);
     const { conversationId } = paramsSchema.parse(request.params);
