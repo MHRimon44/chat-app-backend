@@ -55,6 +55,7 @@ const featureFlagSchema = z
 const environmentSchema = z
   .object({
     ACCESS_TOKEN_AUDIENCE: z.string().min(1).max(200),
+    ADMIN_EMAILS: z.string().default('').transform((value) => value.split(',').map((email) => email.trim().toLowerCase()).filter(Boolean)),
     ACCESS_TOKEN_ISSUER: z.string().min(1).max(200),
     ACCESS_TOKEN_PRIVATE_KEY_BASE64: z.string().min(1),
     ACCESS_TOKEN_PUBLIC_KEY_BASE64: z.string().min(1),
@@ -118,6 +119,7 @@ const environmentSchema = z
   });
 
 export type ApiConfig = Readonly<{
+  adminEmails: readonly string[];
   registrationOtpEnabled: boolean;
   passwordResetEnabled: boolean;
   accessTokenAudience: string;
@@ -182,6 +184,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): ApiCon
   }
 
   return Object.freeze({
+    adminEmails: Object.freeze([...result.data.ADMIN_EMAILS]),
     registrationOtpEnabled: result.data.REGISTRATION_OTP_ENABLED,
     passwordResetEnabled: result.data.PASSWORD_RESET_ENABLED,
     accessTokenAudience: result.data.ACCESS_TOKEN_AUDIENCE,

@@ -22,6 +22,7 @@ import { createShutdownHandler } from './runtime/shutdown.js';
 import { createRealtimeServer } from './realtime/socket-server.js';
 import { createMongoUserRepository } from './users/repository.js';
 import { createUserService } from './users/service.js';
+import { createAdminService } from './admin/service.js';
 
 function listen(server: Server, port: number): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -77,7 +78,8 @@ async function main(): Promise<void> {
     userRepository,
   );
   const messages = createMessageService(() => new Date(), rateLimiter);
-  const app = createApp({ auth, config, conversations, logger, messages, readiness, users });
+  const admin = createAdminService(config.adminEmails);
+  const app = createApp({ admin, auth, config, conversations, logger, messages, readiness, users });
   const server = createServer(app);
   const realtime = await createRealtimeServer({ auth, config, logger, messages, server });
   const shutdown = createShutdownHandler({

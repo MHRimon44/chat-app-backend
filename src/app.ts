@@ -17,8 +17,11 @@ import type { UserService } from './users/service.js';
 import { createMessageRouters } from './messages/routes.js';
 import type { MessageService } from './messages/service.js';
 import { mountSwagger } from './swagger.js';
+import { createAdminRouter } from './admin/routes.js';
+import type { AdminService } from './admin/service.js';
 
 export type AppDependencies = Readonly<{
+  admin?: AdminService;
   auth?: AuthService;
   conversations?: ConversationService;
   config: ApiConfig;
@@ -46,6 +49,7 @@ export function createApp(dependencies: AppDependencies): Express {
   app.use(express.urlencoded({ extended: false, limit: dependencies.config.bodyLimit }));
 
   app.use('/v1/health', createHealthRouter(dependencies.readiness));
+  if (dependencies.auth && dependencies.admin) app.use('/v1/admin', createAdminRouter(dependencies.auth, dependencies.admin, dependencies.readiness));
   if (dependencies.auth)
     app.use('/v1/auth', createAuthRouter(dependencies.auth, dependencies.config));
   if (dependencies.auth && dependencies.users)
