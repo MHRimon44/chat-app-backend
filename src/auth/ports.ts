@@ -1,4 +1,10 @@
-import type { AuthUser, DeviceMetadata, PasswordResetRecord, PendingRegistrationRecord, SessionRecord } from './types.js';
+import type {
+  AuthUser,
+  DeviceMetadata,
+  PasswordResetRecord,
+  PendingRegistrationRecord,
+  SessionRecord,
+} from './types.js';
 
 export type NewUser = Readonly<{
   usernameNormalized: string;
@@ -10,6 +16,7 @@ export type NewUser = Readonly<{
 }>;
 
 export interface AuthRepository {
+  deletePendingRegistration(emailNormalized: string): Promise<void>;
   createUser(user: NewUser): Promise<AuthUser>;
   findUserByEmail(emailNormalized: string): Promise<AuthUser | null>;
   findUserByUsername(usernameNormalized: string): Promise<AuthUser | null>;
@@ -41,8 +48,14 @@ export interface AuthRepository {
     createdAt: Date;
     expiresAt: Date;
   }): Promise<PendingRegistrationRecord>;
-  findPendingRegistration(emailNormalized: string, now: Date): Promise<PendingRegistrationRecord | null>;
-  consumePendingRegistration(emailNormalized: string, now: Date): Promise<PendingRegistrationRecord | null>;
+  findPendingRegistration(
+    emailNormalized: string,
+    now: Date,
+  ): Promise<PendingRegistrationRecord | null>;
+  consumePendingRegistration(
+    emailNormalized: string,
+    now: Date,
+  ): Promise<PendingRegistrationRecord | null>;
   createPasswordReset(input: {
     userId: string;
     otpHash: string;

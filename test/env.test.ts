@@ -25,28 +25,37 @@ describe('API environment configuration', () => {
   });
 
   it('requires a Resend key and sender when enabled', () => {
-    expect(() => loadConfig({ ...validEnvironment, EMAIL_PROVIDER: 'resend' }))
-      .toThrow(EnvironmentValidationError);
+    expect(() =>
+      loadConfig({
+        ...validEnvironment,
+        REGISTRATION_OTP_ENABLED: 'true',
+        EMAIL_PROVIDER: 'resend',
+      }),
+    ).toThrow(EnvironmentValidationError);
   });
 
   it('loads a typed Resend email configuration', () => {
     const config = loadConfig({
       ...validEnvironment,
+      REGISTRATION_OTP_ENABLED: 'true',
       EMAIL_PROVIDER: 'resend',
       RESEND_API_KEY: 're_test_placeholder_key_123456789',
       RESEND_FROM_EMAIL: 'security@example.com',
       RESEND_FROM_NAME: 'Alap',
     });
     expect(config.email).toEqual({
-      provider: 'resend', apiKey: 're_test_placeholder_key_123456789',
-      fromEmail: 'security@example.com', fromName: 'Alap',
+      provider: 'resend',
+      apiKey: 're_test_placeholder_key_123456789',
+      fromEmail: 'security@example.com',
+      fromName: 'Alap',
     });
   });
 
   it('rejects unsupported legacy email providers', () => {
     for (const provider of ['ses', 'smtp', 'brevo']) {
-      expect(() => loadConfig({ ...validEnvironment, EMAIL_PROVIDER: provider }))
-        .toThrow(EnvironmentValidationError);
+      expect(() => loadConfig({ ...validEnvironment, EMAIL_PROVIDER: provider })).toThrow(
+        EnvironmentValidationError,
+      );
     }
   });
 
@@ -81,5 +90,49 @@ describe('API environment configuration', () => {
         ]),
       );
     }
+  });
+});
+
+describe('temporary auth environment', () => {
+  it.each(['development', 'production'])(
+    'loads disabled features without unused email credentials in %s',
+    (nodeEnv) => {
+      const config = loadConfig({
+        ...validEnvironment,
+        NODE_ENV: nodeEnv,
+        EMAIL_PROVIDER: 'resend',
+        RESEND_API_KEY: '',
+        RESEND_FROM_EMAIL: '',
+      });
+      expect(config.registrationOtpEnabled).toBe(false);
+      expect(config.passwordResetEnabled).toBe(false);
+      expect(config.email).toEqual({ provider: 'unconfigured' });
+    },
+  );
+
+  it.each(['REGISTRATION_OTP_ENABLED', 'PASSWORD_RESET_ENABLED'])(
+    'requires working email configuration for %s',
+    (flag) => {
+      expect(() => loadConfig({ ...validEnvironment, [flag]: 'true' })).toThrow(
+        EnvironmentValidationError,
+      );
+      expect(() =>
+        loadConfig({ ...validEnvironment, [flag]: 'true', EMAIL_PROVIDER: 'resend' }),
+      ).toThrow(EnvironmentValidationError);
+      const config = loadConfig({
+        ...validEnvironment,
+        [flag]: 'true',
+        EMAIL_PROVIDER: 'resend',
+        RESEND_API_KEY: 're_test_placeholder_key_123456789',
+        RESEND_FROM_EMAIL: 'security@example.com',
+      });
+      expect(config.email.provider).toBe('resend');
+    },
+  );
+
+  it('rejects ambiguous flag values instead of coercing them to true', () => {
+    expect(() => loadConfig({ ...validEnvironment, REGISTRATION_OTP_ENABLED: '0' })).toThrow(
+      EnvironmentValidationError,
+    );
   });
 });

@@ -1,13 +1,19 @@
 import { randomUUID } from 'node:crypto';
 
 import { AppError } from '../errors/app-error.js';
-import { createNumericOtp, createOpaqueToken, hashOpaqueToken, hashSensitiveValue } from './crypto.js';
+import {
+  createNumericOtp,
+  createOpaqueToken,
+  hashOpaqueToken,
+  hashSensitiveValue,
+} from './crypto.js';
 import type { EmailNotifier } from './email-notifier.js';
 import type {
   AccessTokenProvider,
   AuthRepository,
   PasswordHasher,
   RateLimiter,
+  NewUser,
 } from './ports.js';
 import type { AuthUser, DeviceMetadata, PublicAuthUser, SessionView, TokenPair } from './types.js';
 
@@ -23,7 +29,7 @@ export interface AuthService {
     email: string;
     password: string;
     device: DeviceMetadata;
-  }): Promise<{ message: string }>;
+  }): Promise<{ message: string } | TokenPair>;
   verifyRegistration(input: {
     email: string;
     otp: string;
@@ -41,6 +47,8 @@ export interface AuthService {
 }
 
 export function createAuthService(dependencies: {
+  registrationOtpEnabled?: boolean;
+  passwordResetEnabled?: boolean;
   accessTokens: AccessTokenProvider;
   now?: () => Date;
   passwordHasher: PasswordHasher;
@@ -104,7 +112,7 @@ export function createAuthService(dependencies: {
       email: string;
       password: string;
       device: DeviceMetadata;
-    }): Promise<{ message: string }> {
+    }): Promise<{ message: string } | TokenPair> {
       const emailNormalized = normalizeEmail(input.email);
       await Promise.all([
         enforceLimit(`register:ip:${hashSensitiveValue(input.device.ip ?? 'unknown')}`, 5, 3_600),
@@ -122,6 +130,24 @@ export function createAuthService(dependencies: {
           message: 'That email or username is already in use.',
           statusCode: 409,
         });
+      }
+
+      // TEMPORARILY DISABLED: Email verification can be restored with the feature flag
+      // once production email delivery/domain configuration is available.
+      if (!dependencies.registrationOtpEnabled) {
+        const pair = await completeRegistration(
+          {
+            usernameNormalized,
+            displayName: input.displayName.trim(),
+            email: input.email.trim(),
+            emailNormalized,
+            passwordHash: await dependencies.passwordHasher.hash(input.password),
+            passwordChangedAt: now(),
+          },
+          input.device,
+        );
+        await dependencies.repository.deletePendingRegistration(emailNormalized);
+        return pair;
       }
 
       const currentTime = now();
@@ -168,6 +194,7 @@ export function createAuthService(dependencies: {
       otp: string;
       device: DeviceMetadata;
     }): Promise<TokenPair> {
+      requireFeature(dependencies.registrationOtpEnabled);
       const emailNormalized = normalizeEmail(input.email);
       await enforceLimit(
         `register:verify:${hashSensitiveValue(`${emailNormalized}:${input.device.ip ?? 'unknown'}`)}`,
@@ -186,7 +213,10 @@ export function createAuthService(dependencies: {
         });
       }
 
-      const consumed = await dependencies.repository.consumePendingRegistration(emailNormalized, now());
+      const consumed = await dependencies.repository.consumePendingRegistration(
+        emailNormalized,
+        now(),
+      );
       if (!consumed) {
         throw new AppError({
           code: 'INVALID_OTP',
@@ -195,27 +225,17 @@ export function createAuthService(dependencies: {
         });
       }
 
-      let user: AuthUser;
-      try {
-        user = await dependencies.repository.createUser({
+      return completeRegistration(
+        {
           usernameNormalized: consumed.usernameNormalized,
           displayName: consumed.displayName,
           email: consumed.email,
           emailNormalized: consumed.emailNormalized,
           passwordHash: consumed.passwordHash,
           passwordChangedAt: now(),
-        });
-      } catch (error) {
-        if (isDuplicateError(error)) {
-          throw new AppError({
-            code: 'ACCOUNT_EXISTS',
-            message: 'That email or username is already in use.',
-            statusCode: 409,
-          });
-        }
-        throw error;
-      }
-      return createSessionPair(user, input.device);
+        },
+        input.device,
+      );
     },
 
     async login(input: {
@@ -299,6 +319,7 @@ export function createAuthService(dependencies: {
     },
 
     async forgotPassword(email: string, ip?: string): Promise<{ message: string }> {
+      requireFeature(dependencies.passwordResetEnabled);
       const normalized = normalizeEmail(email);
       await Promise.all([
         enforceLimit(`forgot:email:${hashSensitiveValue(normalized)}`, 3, 3_600),
@@ -333,6 +354,7 @@ export function createAuthService(dependencies: {
       otp: string,
       ip?: string,
     ): Promise<{ resetToken: string }> {
+      requireFeature(dependencies.passwordResetEnabled);
       const normalized = normalizeEmail(email);
       await enforceLimit(
         `forgot:verify:${hashSensitiveValue(`${normalized}:${ip ?? 'unknown'}`)}`,
@@ -340,12 +362,8 @@ export function createAuthService(dependencies: {
         900,
       );
       const user = await dependencies.repository.findUserByEmail(normalized);
-      const reset = user
-        ? await dependencies.repository.findPasswordReset(user.id, now())
-        : null;
-      const valid = reset
-        ? await dependencies.passwordHasher.verify(reset.otpHash, otp)
-        : false;
+      const reset = user ? await dependencies.repository.findPasswordReset(user.id, now()) : null;
+      const valid = reset ? await dependencies.passwordHasher.verify(reset.otpHash, otp) : false;
       if (!reset || !valid) {
         throw new AppError({
           code: 'INVALID_OTP',
@@ -371,6 +389,7 @@ export function createAuthService(dependencies: {
     },
 
     async resetPassword(token: string, newPassword: string): Promise<void> {
+      requireFeature(dependencies.passwordResetEnabled);
       const currentTime = now();
       const passwordHash = await dependencies.passwordHasher.hash(newPassword);
       const user = await dependencies.repository.consumePasswordReset({
@@ -386,8 +405,23 @@ export function createAuthService(dependencies: {
         });
       }
     },
-
   };
+
+  async function completeRegistration(input: NewUser, device: DeviceMetadata): Promise<TokenPair> {
+    let user: AuthUser;
+    try {
+      user = await dependencies.repository.createUser(input);
+    } catch (error) {
+      if (isDuplicateError(error))
+        throw new AppError({
+          code: 'ACCOUNT_EXISTS',
+          message: 'That email or username is already in use.',
+          statusCode: 409,
+        });
+      throw error;
+    }
+    return createSessionPair(user, device);
+  }
 
   async function createSessionPair(user: AuthUser, device: DeviceMetadata): Promise<TokenPair> {
     const refreshToken = createOpaqueToken();
@@ -434,4 +468,13 @@ function unauthorized(): AppError {
     message: 'Authentication is required.',
     statusCode: 401,
   });
+}
+
+function requireFeature(enabled: boolean | undefined): void {
+  if (!enabled)
+    throw new AppError({
+      code: 'FEATURE_DISABLED',
+      message: 'This authentication feature is temporarily unavailable.',
+      statusCode: 404,
+    });
 }

@@ -9,7 +9,7 @@ const id: Schema = { type: 'string', pattern: '^[a-f0-9]{24}$' };
 const email: Schema = { type: 'string', format: 'email', maxLength: 254 };
 const password: Schema = {
   type: 'string',
-  minLength: 12,
+  minLength: 6,
   maxLength: 128,
   format: 'password',
 };
@@ -678,17 +678,80 @@ export const openApiDocument = {
   },
 };
 
+// TEMPORARILY DISABLED: Retain email-dependent contracts for later reactivation.
+export function createOpenApiDocument(features: {
+  registrationOtpEnabled: boolean;
+  passwordResetEnabled: boolean;
+}): Omit<typeof openApiDocument, 'paths'> & { paths: Record<string, unknown> } {
+  const paths: Record<string, unknown> = { ...openApiDocument.paths };
+  if (features.registrationOtpEnabled) {
+    const registration = openApiDocument.paths['/auth/register'].post;
+    const responses = { ...(registration.responses as Schema) };
+    delete responses['201'];
+    paths['/auth/register'] = {
+      post: {
+        ...registration,
+        description: 'Sends an email OTP. Complete registration through /auth/register/verify.',
+        responses: {
+          ...responses,
+          '202': {
+            description: 'Pending registration; verify the emailed OTP.',
+            content: json(object({ data: object({ message: string }, ['message']) }, ['data'])),
+          },
+        },
+      },
+    };
+    paths['/auth/register/verify'] = {
+      post: operation('Authentication', 'Verify registration OTP and create account', {
+        public: true,
+        status: 201,
+        response: tokenResponse,
+        body: object({ email, otp: { type: 'string', pattern: '^[0-9]{6}$' }, device }, [
+          'email',
+          'otp',
+        ]),
+      }),
+    };
+  } else {
+    paths['/auth/register'] = {
+      post: {
+        ...openApiDocument.paths['/auth/register'].post,
+        description:
+          'Registration email verification is temporarily disabled. Creates the account immediately and returns data.user, data.accessToken and data.refreshToken. No OTP screen is required.',
+      },
+    };
+  }
+  if (!features.passwordResetEnabled) {
+    delete paths['/auth/password/forgot'];
+    delete paths['/auth/password/reset'];
+  } else {
+    paths['/auth/password/verify-otp'] = {
+      post: operation('Authentication', 'Verify password recovery OTP', {
+        public: true,
+        body: object({ email, otp: { type: 'string', pattern: '^[0-9]{6}$' } }, ['email', 'otp']),
+        response: object({ data: object({ resetToken: string }, ['resetToken']) }, ['data']),
+      }),
+    };
+  }
+  return { ...openApiDocument, paths };
+}
+
 /**
  * Swagger is available in both development
  * and production.
  */
-export function mountSwagger(app: Express, nodeEnv: string): void {
+export function mountSwagger(
+  app: Express,
+  nodeEnv: string,
+  features: { registrationOtpEnabled: boolean; passwordResetEnabled: boolean },
+): void {
+  const document = createOpenApiDocument(features);
   const isProduction = nodeEnv === 'production';
 
   app.get('/openapi.json', (_request, response) => {
     response.setHeader('Cache-Control', 'no-store');
 
-    response.json(openApiDocument);
+    response.json(document);
   });
 
   app.use(
@@ -717,7 +780,7 @@ export function mountSwagger(app: Express, nodeEnv: string): void {
 
     swaggerUi.serve,
 
-    swaggerUi.setup(openApiDocument, {
+    swaggerUi.setup(document, {
       customSiteTitle: isProduction ? 'Chat App API - Swagger' : 'Chat App - Local Swagger',
 
       swaggerOptions: {

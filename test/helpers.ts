@@ -4,6 +4,8 @@ import type { ApiConfig } from '../src/config/env.js';
 
 export function createTestConfig(overrides: Partial<ApiConfig> = {}): ApiConfig {
   return Object.freeze({
+    registrationOtpEnabled: false,
+    passwordResetEnabled: false,
     accessTokenAudience: 'chat-mobile-test',
     accessTokenIssuer: 'chat-api-test',
     accessTokenPrivateKey: 'test-private-key',

@@ -46,7 +46,8 @@ export function createApp(dependencies: AppDependencies): Express {
   app.use(express.urlencoded({ extended: false, limit: dependencies.config.bodyLimit }));
 
   app.use('/v1/health', createHealthRouter(dependencies.readiness));
-  if (dependencies.auth) app.use('/v1/auth', createAuthRouter(dependencies.auth));
+  if (dependencies.auth)
+    app.use('/v1/auth', createAuthRouter(dependencies.auth, dependencies.config));
   if (dependencies.auth && dependencies.users)
     app.use('/v1/users', createUserRouter(dependencies.auth, dependencies.users));
   if (dependencies.auth && dependencies.conversations)
@@ -61,7 +62,7 @@ export function createApp(dependencies: AppDependencies): Express {
     app.use('/v1/conversations/:conversationId/receipts', messageRouters.conversationReceipts);
     app.use('/v1/messages', messageRouters.messages);
   }
-  mountSwagger(app, dependencies.config.nodeEnv);
+  mountSwagger(app, dependencies.config.nodeEnv, dependencies.config);
   app.use(notFoundHandler);
   app.use(errorHandler);
 

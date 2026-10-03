@@ -1,3 +1,10 @@
+import { generateKeyPairSync } from 'node:crypto';
+import request from 'supertest';
+import { createApp } from '../src/app.js';
+import { passwordHasher } from '../src/auth/crypto.js';
+import { createAccessTokenProvider } from '../src/auth/jwt.js';
+import { createResendEmailNotifier } from '../src/auth/resend-email-notifier.js';
+import { createSilentLogger, createTestConfig } from './helpers.js';
 import { AppError } from '../src/errors/app-error.js';
 import { createAuthService } from '../src/auth/service.js';
 import type {
@@ -7,7 +14,7 @@ import type {
   RateLimiter,
 } from '../src/auth/ports.js';
 import type { EmailNotifier } from '../src/auth/email-notifier.js';
-import type { AuthUser, SessionRecord } from '../src/auth/types.js';
+import type { AuthUser, SessionRecord, TokenPair } from '../src/auth/types.js';
 
 const fixedNow = new Date('2026-08-27T12:00:00.000Z');
 const user: AuthUser = {
@@ -31,12 +38,15 @@ const session: SessionRecord = {
 
 function setup(
   overrides: {
+    registrationOtpEnabled?: boolean;
+    passwordResetEnabled?: boolean;
     repository?: Partial<AuthRepository>;
     hasher?: Partial<PasswordHasher>;
     limiter?: Partial<RateLimiter>;
   } = {},
 ) {
   const repository: AuthRepository = {
+    deletePendingRegistration: jest.fn(async () => undefined),
     createUser: jest.fn(async () => user),
     findUserByEmail: jest.fn(async () => user),
     findUserByUsername: jest.fn(async () => null),
@@ -75,6 +85,8 @@ function setup(
   };
   const notifier: EmailNotifier = { sendOtp: jest.fn(async () => undefined) };
   const service = createAuthService({
+    registrationOtpEnabled: overrides.registrationOtpEnabled ?? true,
+    passwordResetEnabled: overrides.passwordResetEnabled ?? true,
     accessTokens,
     now: () => fixedNow,
     passwordHasher: hasher,
@@ -107,28 +119,45 @@ describe('authentication service', () => {
     );
     expect(result).toEqual({ message: 'A verification code has been sent to your email.' });
     expect(context.repository.createUser).not.toHaveBeenCalled();
-    expect(context.notifier.sendOtp).toHaveBeenCalledWith(expect.objectContaining({
-      email: 'Mehedi@Example.COM', purpose: 'registration',
-    }));
+    expect(context.notifier.sendOtp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'Mehedi@Example.COM',
+        purpose: 'registration',
+      }),
+    );
   });
 
   it('verifies registration OTP before creating the user and session', async () => {
-    const context = setup({ repository: {
-      findPendingRegistration: jest.fn(async () => ({
-        id: 'pending-1', usernameNormalized: 'mehedi_hasan', displayName: 'Mehedi Hasan',
-        email: user.email, emailNormalized: user.emailNormalized,
-        passwordHash: 'new-hash', otpHash: 'otp-hash', createdAt: fixedNow,
-        expiresAt: new Date(fixedNow.getTime() + 900_000),
-      })),
-      consumePendingRegistration: jest.fn(async () => ({
-        id: 'pending-1', usernameNormalized: 'mehedi_hasan', displayName: 'Mehedi Hasan',
-        email: user.email, emailNormalized: user.emailNormalized,
-        passwordHash: 'new-hash', otpHash: 'otp-hash', createdAt: fixedNow,
-        expiresAt: new Date(fixedNow.getTime() + 900_000),
-      })),
-    } });
+    const context = setup({
+      repository: {
+        findPendingRegistration: jest.fn(async () => ({
+          id: 'pending-1',
+          usernameNormalized: 'mehedi_hasan',
+          displayName: 'Mehedi Hasan',
+          email: user.email,
+          emailNormalized: user.emailNormalized,
+          passwordHash: 'new-hash',
+          otpHash: 'otp-hash',
+          createdAt: fixedNow,
+          expiresAt: new Date(fixedNow.getTime() + 900_000),
+        })),
+        consumePendingRegistration: jest.fn(async () => ({
+          id: 'pending-1',
+          usernameNormalized: 'mehedi_hasan',
+          displayName: 'Mehedi Hasan',
+          email: user.email,
+          emailNormalized: user.emailNormalized,
+          passwordHash: 'new-hash',
+          otpHash: 'otp-hash',
+          createdAt: fixedNow,
+          expiresAt: new Date(fixedNow.getTime() + 900_000),
+        })),
+      },
+    });
     const result = await context.service.verifyRegistration({
-      email: user.email, otp: '123456', device: { platform: 'android' },
+      email: user.email,
+      otp: '123456',
+      device: { platform: 'android' },
     });
     expect(result.refreshToken).toHaveLength(43);
     expect(context.repository.createUser).toHaveBeenCalledTimes(1);
@@ -137,9 +166,13 @@ describe('authentication service', () => {
 
   it('rejects an invalid registration OTP', async () => {
     const context = setup();
-    await expect(context.service.verifyRegistration({
-      email: user.email, otp: '000000', device: {},
-    })).rejects.toMatchObject({ code: 'INVALID_OTP', statusCode: 400 });
+    await expect(
+      context.service.verifyRegistration({
+        email: user.email,
+        otp: '000000',
+        device: {},
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_OTP', statusCode: 400 });
     expect(context.repository.createUser).not.toHaveBeenCalled();
   });
 
@@ -208,5 +241,185 @@ describe('authentication service', () => {
         statusCode: 429,
       });
     }
+  });
+});
+
+const registrationInput = {
+  username: ' Mehedi_Hasan ',
+  displayName: ' Mehedi Hasan ',
+  email: ' Mehedi@Example.COM ',
+  password: 'a secure passphrase',
+  device: { platform: 'ios' as const },
+};
+
+describe('temporary direct registration', () => {
+  it('creates the normalized user and session without hashing an OTP or storing pending state', async () => {
+    const context = setup({
+      registrationOtpEnabled: false,
+      repository: { findUserByEmail: jest.fn(async () => null) },
+    });
+    const result = await context.service.register(registrationInput);
+    expect(result).toMatchObject({ accessToken: 'access-token', user: { id: user.id } });
+    expect(context.repository.createUser).toHaveBeenCalledWith({
+      usernameNormalized: 'mehedi_hasan',
+      displayName: 'Mehedi Hasan',
+      email: 'Mehedi@Example.COM',
+      emailNormalized: 'mehedi@example.com',
+      passwordHash: 'new-hash',
+      passwordChangedAt: fixedNow,
+    });
+    expect(context.hasher.hash).toHaveBeenCalledTimes(1);
+    expect(context.hasher.hash).toHaveBeenCalledWith(registrationInput.password);
+    expect(context.repository.upsertPendingRegistration).not.toHaveBeenCalled();
+    expect(context.repository.deletePendingRegistration).toHaveBeenCalledWith('mehedi@example.com');
+    expect(context.notifier.sendOtp).not.toHaveBeenCalled();
+    expect(context.rateLimiter.consume).toHaveBeenCalledTimes(2);
+    expect(context.repository.createSession).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['email', 'username'])(
+    'rejects duplicate %s before hashing or creating records',
+    async (identity) => {
+      const context = setup({
+        registrationOtpEnabled: false,
+        repository: {
+          findUserByEmail: jest.fn(async () => (identity === 'email' ? user : null)),
+          findUserByUsername: jest.fn(async () => (identity === 'username' ? user : null)),
+        },
+      });
+      await expect(context.service.register(registrationInput)).rejects.toMatchObject({
+        code: 'ACCOUNT_EXISTS',
+        statusCode: 409,
+      });
+      expect(context.hasher.hash).not.toHaveBeenCalled();
+      expect(context.repository.createUser).not.toHaveBeenCalled();
+    },
+  );
+
+  it('maps a raced MongoDB unique-index violation to the existing conflict response', async () => {
+    const context = setup({
+      registrationOtpEnabled: false,
+      repository: {
+        findUserByEmail: jest.fn(async () => null),
+        createUser: jest.fn(async () => {
+          throw Object.assign(new Error('Duplicate key'), { code: 11000 });
+        }),
+      },
+    });
+    await expect(context.service.register(registrationInput)).rejects.toMatchObject({
+      code: 'ACCOUNT_EXISTS',
+      statusCode: 409,
+    });
+    expect(context.repository.createSession).not.toHaveBeenCalled();
+    expect(context.notifier.sendOtp).not.toHaveBeenCalled();
+  });
+
+  it('guards disabled service methods before accessing OTP state or sending email', async () => {
+    const context = setup({ registrationOtpEnabled: false, passwordResetEnabled: false });
+    const attempts = [
+      context.service.verifyRegistration({ email: user.email, otp: '123456', device: {} }),
+      context.service.forgotPassword(user.email),
+      context.service.verifyPasswordResetOtp(user.email, '123456'),
+      context.service.resetPassword('x'.repeat(43), 'a secure passphrase'),
+    ];
+    for (const attempt of attempts)
+      await expect(attempt).rejects.toMatchObject({ code: 'FEATURE_DISABLED', statusCode: 404 });
+    expect(context.repository.findPendingRegistration).not.toHaveBeenCalled();
+    expect(context.repository.createPasswordReset).not.toHaveBeenCalled();
+    expect(context.repository.consumePasswordReset).not.toHaveBeenCalled();
+    expect(context.notifier.sendOtp).not.toHaveBeenCalled();
+    expect(context.hasher.hash).not.toHaveBeenCalled();
+  });
+
+  it('registers and logs in with real Argon2id and JWT, refreshes, and logs out without a Resend request', async () => {
+    let persisted: AuthUser | null = null;
+    let active = true;
+    const context = setup({
+      repository: {
+        createUser: jest.fn(async (input) => {
+          persisted = {
+            ...input,
+            id: user.id,
+            username: input.usernameNormalized,
+            status: 'active',
+          };
+          return persisted;
+        }),
+        findUserByEmail: jest.fn(async () => persisted),
+        isSessionActive: jest.fn(async () => active),
+        rotateRefreshToken: jest.fn(async () => ({ session, user: persisted! })),
+        revokeSession: jest.fn(async () => {
+          active = false;
+          return true;
+        }),
+      },
+    });
+    const keys = generateKeyPairSync('ed25519');
+    const transport = { send: jest.fn(async () => undefined) };
+    const service = createAuthService({
+      accessTokens: createAccessTokenProvider({
+        audience: 'test',
+        issuer: 'test',
+        ttlSeconds: 600,
+        privateKeyPem: keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+        publicKeyPem: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+      }),
+      passwordHasher,
+      repository: context.repository,
+      rateLimiter: context.rateLimiter,
+      emailNotifier: createResendEmailNotifier({
+        apiKey: 'unused',
+        fromEmail: 'test@example.com',
+        fromName: 'Test',
+        transport,
+      }),
+      refreshTokenTtlDays: 30,
+      resetTtlMinutes: 15,
+    });
+    const app = createApp({
+      auth: service,
+      config: createTestConfig(),
+      logger: createSilentLogger(),
+      readiness: { check: async () => ({ checks: { mongo: 'up', redis: 'up' }, ready: true }) },
+    });
+    const registered = await request(app)
+      .post('/v1/auth/register')
+      .send({ ...registrationInput, email: 'Mehedi@Example.COM', username: 'Mehedi_Hasan' })
+      .expect(201);
+    expect(persisted!.passwordHash).toMatch(/^\$argon2id\$/);
+    expect(await passwordHasher.verify(persisted!.passwordHash, registrationInput.password)).toBe(
+      true,
+    );
+    const registeredData = (registered.body as { data: TokenPair }).data;
+    expect(registeredData.user).not.toHaveProperty('passwordHash');
+    await request(app)
+      .post('/v1/auth/login')
+      .send({ email: 'mehedi@example.com', password: 'wrong' })
+      .expect(401);
+    const loggedIn = await request(app)
+      .post('/v1/auth/login')
+      .send({ email: 'mehedi@example.com', password: registrationInput.password })
+      .expect(200);
+    const loggedInData = (loggedIn.body as { data: TokenPair }).data;
+    await request(app)
+      .get('/v1/auth/sessions')
+      .set('Authorization', `Bearer ${loggedInData.accessToken}`)
+      .expect(200);
+    const refreshed = await request(app)
+      .post('/v1/auth/refresh')
+      .send({ refreshToken: loggedInData.refreshToken })
+      .expect(200);
+    const refreshedData = (refreshed.body as { data: TokenPair }).data;
+    expect(refreshedData.refreshToken).not.toBe(loggedInData.refreshToken);
+    await request(app)
+      .post('/v1/auth/logout')
+      .set('Authorization', `Bearer ${refreshedData.accessToken}`)
+      .expect(204);
+    await request(app)
+      .get('/v1/auth/sessions')
+      .set('Authorization', `Bearer ${refreshedData.accessToken}`)
+      .expect(401);
+    expect(transport.send).not.toHaveBeenCalled();
+    expect(context.repository.upsertPendingRegistration).not.toHaveBeenCalled();
   });
 });

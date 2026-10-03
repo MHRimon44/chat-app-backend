@@ -47,6 +47,11 @@ const redisUriSchema = z
     'Redis URI must use redis:// or rediss://.',
   );
 
+const featureFlagSchema = z
+  .enum(['true', 'false'])
+  .default('false')
+  .transform((value) => value === 'true');
+
 const environmentSchema = z
   .object({
     ACCESS_TOKEN_AUDIENCE: z.string().min(1).max(200),
@@ -59,9 +64,17 @@ const environmentSchema = z
       .regex(/^\d+(?:b|kb|mb)$/i)
       .default('100kb'),
     CORS_ALLOWED_ORIGINS: commaSeparatedOriginsSchema,
+    REGISTRATION_OTP_ENABLED: featureFlagSchema,
+    PASSWORD_RESET_ENABLED: featureFlagSchema,
     EMAIL_PROVIDER: z.enum(['unconfigured', 'resend']).default('unconfigured'),
-    RESEND_API_KEY: z.string().min(20).optional(),
-    RESEND_FROM_EMAIL: z.string().email().optional(),
+    RESEND_API_KEY: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.string().min(20).optional(),
+    ),
+    RESEND_FROM_EMAIL: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.string().email().optional(),
+    ),
     RESEND_FROM_NAME: z.string().min(1).max(100).default('Alap'),
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
@@ -84,7 +97,14 @@ const environmentSchema = z
     TRUST_PROXY: z.enum(['false', 'loopback']).default('false'),
   })
   .superRefine((value, context) => {
-    if (value.EMAIL_PROVIDER === 'resend') {
+    if (value.REGISTRATION_OTP_ENABLED || value.PASSWORD_RESET_ENABLED) {
+      if (value.EMAIL_PROVIDER !== 'resend')
+        context.addIssue({
+          code: 'custom',
+          message:
+            'Resend email delivery is required when an email-dependent auth feature is enabled.',
+          path: ['EMAIL_PROVIDER'],
+        });
       for (const key of ['RESEND_API_KEY', 'RESEND_FROM_EMAIL'] as const) {
         if (!value[key]) {
           context.addIssue({
@@ -95,10 +115,11 @@ const environmentSchema = z
         }
       }
     }
-
   });
 
 export type ApiConfig = Readonly<{
+  registrationOtpEnabled: boolean;
+  passwordResetEnabled: boolean;
   accessTokenAudience: string;
   accessTokenIssuer: string;
   accessTokenPrivateKey: string;
@@ -146,7 +167,10 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): ApiCon
   }
 
   let email: ApiConfig['email'];
-  if (result.data.EMAIL_PROVIDER === 'resend') {
+  if (
+    (result.data.REGISTRATION_OTP_ENABLED || result.data.PASSWORD_RESET_ENABLED) &&
+    result.data.EMAIL_PROVIDER === 'resend'
+  ) {
     email = Object.freeze({
       apiKey: result.data.RESEND_API_KEY!,
       fromEmail: result.data.RESEND_FROM_EMAIL!,
@@ -158,6 +182,8 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): ApiCon
   }
 
   return Object.freeze({
+    registrationOtpEnabled: result.data.REGISTRATION_OTP_ENABLED,
+    passwordResetEnabled: result.data.PASSWORD_RESET_ENABLED,
     accessTokenAudience: result.data.ACCESS_TOKEN_AUDIENCE,
     accessTokenIssuer: result.data.ACCESS_TOKEN_ISSUER,
     accessTokenPrivateKey: Buffer.from(

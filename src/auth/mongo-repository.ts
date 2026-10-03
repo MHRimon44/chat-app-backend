@@ -18,6 +18,10 @@ import type {
 
 export function createMongoAuthRepository(): AuthRepository {
   return {
+    async deletePendingRegistration(emailNormalized) {
+      await PendingRegistrationModel.deleteOne({ emailNormalized });
+    },
+
     async createUser(input) {
       const [created] = await UserModel.create([
         {

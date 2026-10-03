@@ -6,7 +6,7 @@ import type { AuthService } from './service.js';
 import type { DeviceMetadata } from './types.js';
 
 const emailSchema = z.string().trim().email().max(254);
-const passwordSchema = z.string().min(12).max(128);
+const passwordSchema = z.string().min(6).max(128);
 const usernameSchema = z
   .string()
   .trim()
@@ -41,7 +41,10 @@ const verifyResetOtpSchema = z.object({ email: emailSchema, otp: otpSchema });
 const resetSchema = z.object({ token: z.string().min(40).max(200), password: passwordSchema });
 const sessionParamsSchema = z.object({ sessionId: z.string().regex(/^[a-f\d]{24}$/i) });
 
-export function createAuthRouter(auth: AuthService): Router {
+export function createAuthRouter(
+  auth: AuthService,
+  features: { registrationOtpEnabled: boolean; passwordResetEnabled: boolean },
+): Router {
   const router = Router();
   const accessRequired = requireAccessToken(auth);
 
@@ -54,18 +57,19 @@ export function createAuthRouter(auth: AuthService): Router {
       password: input.password,
       device: requestDevice(request, input.device),
     });
-    response.status(202).json({ data: result });
+    response.status(features.registrationOtpEnabled ? 202 : 201).json({ data: result });
   });
 
-  router.post('/register/verify', async (request, response) => {
-    const input = verifyRegistrationSchema.parse(request.body);
-    const pair = await auth.verifyRegistration({
-      email: input.email,
-      otp: input.otp,
-      device: requestDevice(request, input.device),
+  if (features.registrationOtpEnabled)
+    router.post('/register/verify', async (request, response) => {
+      const input = verifyRegistrationSchema.parse(request.body);
+      const pair = await auth.verifyRegistration({
+        email: input.email,
+        otp: input.otp,
+        device: requestDevice(request, input.device),
+      });
+      response.status(201).json({ data: pair });
     });
-    response.status(201).json({ data: pair });
-  });
 
   router.post('/login', async (request, response) => {
     const input = loginSchema.parse(request.body);
@@ -106,21 +110,29 @@ export function createAuthRouter(auth: AuthService): Router {
     response.status(204).send();
   });
 
-  router.post('/password/forgot', async (request, response) => {
-    const { email } = forgotSchema.parse(request.body);
-    response.json({ data: await auth.forgotPassword(email, request.ip) });
-  });
+  // TEMPORARILY DISABLED: Password recovery awaits enabled email delivery.
+  if (features.passwordResetEnabled)
+    router.post('/password/forgot', async (request, response) => {
+      const { email } = forgotSchema.parse(request.body);
+      response.json({ data: await auth.forgotPassword(email, request.ip) });
+    });
 
-  router.post('/password/verify-otp', async (request, response) => {
-    const input = verifyResetOtpSchema.parse(request.body);
-    response.json({ data: await auth.verifyPasswordResetOtp(input.email, input.otp, request.ip) });
-  });
+  // TEMPORARILY DISABLED: Password recovery awaits enabled email delivery.
+  if (features.passwordResetEnabled)
+    router.post('/password/verify-otp', async (request, response) => {
+      const input = verifyResetOtpSchema.parse(request.body);
+      response.json({
+        data: await auth.verifyPasswordResetOtp(input.email, input.otp, request.ip),
+      });
+    });
 
-  router.post('/password/reset', async (request, response) => {
-    const input = resetSchema.parse(request.body);
-    await auth.resetPassword(input.token, input.password);
-    response.status(204).send();
-  });
+  // TEMPORARILY DISABLED: Password recovery awaits enabled email delivery.
+  if (features.passwordResetEnabled)
+    router.post('/password/reset', async (request, response) => {
+      const input = resetSchema.parse(request.body);
+      await auth.resetPassword(input.token, input.password);
+      response.status(204).send();
+    });
 
   return router;
 }

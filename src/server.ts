@@ -53,6 +53,8 @@ async function main(): Promise<void> {
       ? createResendEmailNotifier(config.email)
       : createUnconfiguredEmailNotifier(logger);
   const auth = createAuthService({
+    registrationOtpEnabled: config.registrationOtpEnabled,
+    passwordResetEnabled: config.passwordResetEnabled,
     accessTokens: createAccessTokenProvider({
       audience: config.accessTokenAudience,
       issuer: config.accessTokenIssuer,
