@@ -44,6 +44,7 @@ export interface AuthService {
   forgotPassword(email: string, ip?: string): Promise<{ message: string }>;
   verifyPasswordResetOtp(email: string, otp: string, ip?: string): Promise<{ resetToken: string }>;
   resetPassword(token: string, newPassword: string): Promise<void>;
+  changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void>;
 }
 
 export function createAuthService(dependencies: {
@@ -386,6 +387,35 @@ export function createAuthService(dependencies: {
         });
       }
       return { resetToken };
+    },
+
+    async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+      const user = await dependencies.repository.findUserById(userId);
+      const valid = user
+        ? await dependencies.passwordHasher.verify(user.passwordHash, currentPassword)
+        : false;
+      if (!user || !valid) {
+        throw new AppError({
+          code: 'INVALID_CURRENT_PASSWORD',
+          message: 'Current password is incorrect.',
+          statusCode: 400,
+        });
+      }
+      const samePassword = await dependencies.passwordHasher.verify(user.passwordHash, newPassword);
+      if (samePassword) {
+        throw new AppError({
+          code: 'PASSWORD_UNCHANGED',
+          message: 'New password must be different from the current password.',
+          statusCode: 400,
+        });
+      }
+      const changed = await dependencies.repository.updatePassword({
+        userId,
+        newPasswordHash: await dependencies.passwordHasher.hash(newPassword),
+        now: now(),
+        revokeReason: 'password_changed',
+      });
+      if (!changed) throw unauthorized();
     },
 
     async resetPassword(token: string, newPassword: string): Promise<void> {

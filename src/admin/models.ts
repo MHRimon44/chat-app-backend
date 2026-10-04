@@ -6,7 +6,7 @@ const { model, models, Schema } = mongoose;
 export interface AdminAuditDocument {
   _id: Types.ObjectId;
   actorId: Types.ObjectId;
-  action: 'user.status_changed' | 'user.sessions_revoked' | 'user.deleted';
+  action: 'user.status_changed' | 'user.sessions_revoked' | 'user.password_reset' | 'user.deleted';
   targetUserId?: Types.ObjectId;
   metadata: Record<string, unknown>;
   createdAt: Date;
@@ -17,7 +17,7 @@ const adminAuditSchema = new Schema<AdminAuditDocument>(
     actorId: { type: Schema.Types.ObjectId, required: true, index: true },
     action: {
       type: String,
-      enum: ['user.status_changed', 'user.sessions_revoked', 'user.deleted'],
+      enum: ['user.status_changed', 'user.sessions_revoked', 'user.password_reset', 'user.deleted'],
       required: true,
       index: true,
     },

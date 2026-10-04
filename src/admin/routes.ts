@@ -14,6 +14,7 @@ const listSchema = z.object({
 });
 const statusSchema = z.object({ status: z.enum(['active', 'disabled']) });
 const auditSchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50) });
+const resetPasswordSchema = z.object({ password: z.string().min(6).max(128) });
 
 export function createAdminRouter(
   auth: AuthService,
@@ -31,7 +32,10 @@ export function createAdminRouter(
     }
   });
 
-  router.get('/me', (_req, res) => res.status(200).json({ data: { admin: true } }));
+  router.get('/me', (_req, res) => {
+    const { userId } = getAuthContext(res.locals);
+    res.status(200).json({ data: { admin: true, userId } });
+  });
   router.get('/dashboard', async (_req, res, next) => {
     try {
       res.status(200).json({ data: await admin.dashboard() });
@@ -76,6 +80,17 @@ export function createAdminRouter(
       const { userId: actorId } = getAuthContext(res.locals);
       const revoked = await admin.revokeSessions(actorId, req.params.userId);
       res.status(200).json({ data: { revoked } });
+    } catch (error) {
+      next(error);
+    }
+  });
+  router.post('/users/:userId/reset-password', async (req, res, next) => {
+    try {
+      const { userId: actorId } = getAuthContext(res.locals);
+      const { password } = resetPasswordSchema.parse(req.body);
+      res.status(200).json({
+        data: await admin.resetUserPassword(actorId, req.params.userId, password),
+      });
     } catch (error) {
       next(error);
     }

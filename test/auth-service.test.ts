@@ -65,6 +65,7 @@ function setup(
     findPasswordReset: jest.fn(async () => null),
     verifyPasswordReset: jest.fn(async () => true),
     consumePasswordReset: jest.fn(async () => user),
+    updatePassword: jest.fn(async () => user),
     ...overrides.repository,
   };
   const hasher: PasswordHasher = {

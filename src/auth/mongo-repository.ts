@@ -299,6 +299,25 @@ export function createMongoAuthRepository(): AuthRepository {
         return mapUser(user, true);
       });
     },
+
+    async updatePassword(input) {
+      return mongoose.connection.transaction(async (transaction) => {
+        const user = await UserModel.findByIdAndUpdate(
+          input.userId,
+          { $set: { passwordHash: input.newPasswordHash, passwordChangedAt: input.now } },
+          { new: true, session: transaction },
+        )
+          .select('+passwordHash')
+          .lean();
+        if (!user) return null;
+        await SessionModel.updateMany(
+          { userId: input.userId, revokedAt: { $exists: false } },
+          { $set: { revokedAt: input.now, revokeReason: input.revokeReason } },
+          { session: transaction },
+        );
+        return mapUser(user, true);
+      });
+    },
   };
 }
 

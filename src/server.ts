@@ -78,7 +78,7 @@ async function main(): Promise<void> {
     userRepository,
   );
   const messages = createMessageService(() => new Date(), rateLimiter);
-  const admin = createAdminService(config.adminEmails);
+  const admin = createAdminService(config.adminEmails, passwordHasher);
   const app = createApp({ admin, auth, config, conversations, logger, messages, readiness, users });
   const server = createServer(app);
   const realtime = await createRealtimeServer({ auth, config, logger, messages, server });

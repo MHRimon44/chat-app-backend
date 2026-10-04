@@ -73,6 +73,12 @@ export interface AuthRepository {
     newPasswordHash: string;
     now: Date;
   }): Promise<AuthUser | null>;
+  updatePassword(input: {
+    userId: string;
+    newPasswordHash: string;
+    now: Date;
+    revokeReason: string;
+  }): Promise<AuthUser | null>;
 }
 
 export interface PasswordHasher {

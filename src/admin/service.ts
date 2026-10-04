@@ -14,6 +14,7 @@ import { AppError } from '../errors/app-error.js';
 
 import { MessageModel, MessageReactionModel, MessageUserStateModel } from '../messages/models.js';
 
+import type { PasswordHasher } from '../auth/ports.js';
 import { AdminAuditModel } from './models.js';
 
 export type AdminUser = Readonly<{
@@ -53,7 +54,7 @@ export type AdminUserDetails = Readonly<{
 export type AdminAuditItem = Readonly<{
   id: string;
   actorId: string;
-  action: 'user.status_changed' | 'user.sessions_revoked' | 'user.deleted';
+  action: 'user.status_changed' | 'user.sessions_revoked' | 'user.password_reset' | 'user.deleted';
   targetUserId?: string;
   metadata: Record<string, unknown>;
   createdAt: string;
@@ -91,6 +92,8 @@ export interface AdminService {
   setUserStatus(actorId: string, userId: string, status: 'active' | 'disabled'): Promise<AdminUser>;
 
   revokeSessions(actorId: string, userId: string): Promise<number>;
+
+  resetUserPassword(actorId: string, userId: string, newPassword: string): Promise<{ reset: true; revoked: number }>; 
 
   deleteUser(actorId: string, userId: string): Promise<{ deleted: true }>;
 
@@ -172,7 +175,7 @@ function validUserId(userId: string): Types.ObjectId {
   return new Types.ObjectId(userId);
 }
 
-export function createAdminService(adminEmails: readonly string[]): AdminService {
+export function createAdminService(adminEmails: readonly string[], passwordHasher: PasswordHasher): AdminService {
   const allowed = new Set(adminEmails.map((value) => value.trim().toLowerCase()).filter(Boolean));
 
   async function assertAdmin(userId: string): Promise<void> {
@@ -496,6 +499,41 @@ export function createAdminService(adminEmails: readonly string[]): AdminService
       });
 
       return result.modifiedCount;
+    },
+
+    async resetUserPassword(actorId, userId, newPassword) {
+      if (actorId === userId) {
+        throw new AppError({
+          code: 'USE_SELF_PASSWORD_CHANGE',
+          message: 'Use Change password to update your own password.',
+          statusCode: 400,
+        });
+      }
+      const { id, user } = await ensureTarget(userId);
+      const now = new Date();
+      const passwordHash = await passwordHasher.hash(newPassword);
+      const revoked = await SessionModel.countDocuments({
+        userId: id,
+        revokedAt: { $exists: false },
+        expiresAt: { $gt: now },
+      });
+      await Promise.all([
+        UserModel.updateOne(
+          { _id: id },
+          { $set: { passwordHash, passwordChangedAt: now } },
+        ),
+        SessionModel.updateMany(
+          { userId: id, revokedAt: { $exists: false } },
+          { $set: { revokedAt: now, revokeReason: 'admin_password_reset' } },
+        ),
+      ]);
+      await AdminAuditModel.create({
+        actorId: new Types.ObjectId(actorId),
+        action: 'user.password_reset',
+        targetUserId: id,
+        metadata: { email: user.emailDisplay, revokedSessions: revoked },
+      });
+      return { reset: true, revoked };
     },
 
     async deleteUser(actorId, userId) {

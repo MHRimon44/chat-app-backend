@@ -39,6 +39,10 @@ const refreshSchema = z.object({ refreshToken: z.string().min(40).max(200) });
 const forgotSchema = z.object({ email: emailSchema });
 const verifyResetOtpSchema = z.object({ email: emailSchema, otp: otpSchema });
 const resetSchema = z.object({ token: z.string().min(40).max(200), password: passwordSchema });
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(128),
+  newPassword: passwordSchema,
+});
 const sessionParamsSchema = z.object({ sessionId: z.string().regex(/^[a-f\d]{24}$/i) });
 
 export function createAuthRouter(
@@ -95,6 +99,13 @@ export function createAuthRouter(
   router.post('/logout-all', accessRequired, async (_request, response) => {
     const context = getAuthContext(response.locals);
     await auth.logoutAll(context.userId);
+    response.status(204).send();
+  });
+
+  router.post('/password/change', accessRequired, async (request, response) => {
+    const context = getAuthContext(response.locals);
+    const input = changePasswordSchema.parse(request.body);
+    await auth.changePassword(context.userId, input.currentPassword, input.newPassword);
     response.status(204).send();
   });
 

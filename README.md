@@ -633,3 +633,7 @@ TODO — restore Forgot Password independently:
    `password` to `/v1/auth/password/reset`. Successful reset revokes existing sessions.
 4. Verify the full recovery flow with a real inbox. Both flags automatically restore
    their routes and Swagger documentation; no source changes or migrations are needed.
+
+## Remove Radis cache
+
+docker exec -it production-chat-local-redis-1 sh -c 'redis-cli -a "$REDIS_PASSWORD" FLUSHALL'
